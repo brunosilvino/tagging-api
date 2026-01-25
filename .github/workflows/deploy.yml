@@ -7,7 +7,7 @@ on:
   workflow_dispatch:  # Permite disparo manual
 
 env:
-  REGISTRY: us-central1-docker.pkg.dev
+  REGISTRY: southamerica-east1-docker.pkg.dev
   PROJECT_ID: tagging-api-481123
   REPOSITORY: tagging-api-repo
   IMAGE_NAME: tagging-api
