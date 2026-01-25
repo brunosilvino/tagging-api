@@ -1,0 +1,8 @@
+{
+    "chat.mcp.serverSampling": {},
+    "github.copilot.chat.commitMessageGeneration.instructions": [{
+        "text": "All commit messages must be in Brazilian Portuguese."
+    }
+        
+    ]
+}

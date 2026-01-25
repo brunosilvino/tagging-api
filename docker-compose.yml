@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  tagging-api:
+    container_name: tagging-api
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./api:/app
+      - ./key.json:/secrets/key.json:ro
+    environment:
+      - GOOGLE_CLOUD_PROJECT=tagging-api-481123
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/key.json
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=development
+      - FLASK_APP=main.py
+      # Deduplication cache settings (seconds and max entries)
+      - DEDUP_TTL=2.0
+      - DEDUP_MAXSIZE=1000
+      # Optional admin key for protected endpoints (set in production)
+      - ADMIN_KEY=
+    command: python -m flask run --host=0.0.0.0 --port=8080 --reload
+    restart: unless-stopped
