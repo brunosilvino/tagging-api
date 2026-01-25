@@ -4,7 +4,7 @@
 set -e
 
 PROJECT_ID="tagging-api-481123"
-REGISTRY="us-central1-docker.pkg.dev"
+REGISTRY="southamerica-east1-docker.pkg.dev"
 REPOSITORY="tagging-api-repo"
 IMAGE_NAME="tagging-api"
 REGION="southamerica-east1"
