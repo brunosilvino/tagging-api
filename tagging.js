@@ -11,6 +11,16 @@ class Event {
         gtag('event', event_name, event_params)
         console.table({ event_name, ...event_params })
     }
+
+    validate(event_name, event_params) {
+        fetch('https://tagging-api-azvnjols4q-rj.a.run.app/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ event_name, event_params })
+        }  ).then(response => response.json())
+    }
 }
 
 //FIELDS
