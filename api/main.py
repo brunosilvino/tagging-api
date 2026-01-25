@@ -5,6 +5,7 @@ import hashlib
 import requests
 import re
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from google.cloud import firestore
 from google.cloud import bigquery
 from cachetools import TTLCache
@@ -17,6 +18,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Configurar CORS
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",  # Permite todas as origens em produção. Para restringir, use: ["https://seudominio.com"]
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "X-CLIENT-ID", "X-ADMIN-KEY"]
+    }
+})
 
 # Configuração do Swagger
 app.config['SWAGGER'] = {
@@ -431,7 +441,7 @@ def refresh_rules():
 
         # Extrai map_version do primeiro documento (todos têm a mesma versão após fetch)
         first_doc = next(iter(events_data.values()))
-        map_version = first_doc.get('metadata', {}).get('map_version')
+        map_version = payload.get('map_id') or first_doc.get('metadata', {}).get('map_version')
 
         # 2. Atualiza Cache (remove antigos do mesmo map_id/map_version e insere novos)
         update_firestore_cache(events_data, map_id=map_id, map_version=map_version)
