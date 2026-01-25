@@ -1,4 +1,5 @@
-key.jsons
+*key.json
+api/key.json
 
 # General
 .DS_Store

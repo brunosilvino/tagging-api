@@ -1,0 +1,19 @@
+# Excluir segredos e artefatos do build
+key.json
+
+# Python caches e artefatos
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# VCS e configs locais
+.git
+.env
+.env.local
+.DS_Store
+
+# Outros
+*.md
+README.md
