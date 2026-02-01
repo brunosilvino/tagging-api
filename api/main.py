@@ -237,7 +237,7 @@ def validate_taxonomy(payload):
     return None
 
 def validate_schema(payload):
-    """Layer 3: Valida contra regras do Firestore.
+    """Layer 3: Valida contra regras do mapa de coleta carregados no Firestore.
 
     Recebe o `payload` completo e usa `metadata` (se presente) para buscar o
     documento de forma precisa; caso contrário realiza uma busca baseada em
@@ -287,20 +287,10 @@ def validate_schema(payload):
                     "message": f"⚠️ Evento '{event_name}' não documentado para este contexto."
                 }
         else:
-            # Busca completa por event_name e filtros extra (params) — semelhante ao loader
+            # Busca apenas por event_name (sem filtros de valores de parâmetros)
+            # Os valores dos parâmetros serão validados depois
             query = db.collection(COLLECTION_NAME).where('event_name', '==', event_name)
-            # aplicar filtros em campos comuns armazenados dentro de 'params'
             
-            
-            if params.get('page_path'):
-                query = query.where('params.page_path', '==', params.get('page_path'))
-            if params.get('title'):
-                query = query.where('params.title', '==', params.get('title'))
-            if params.get('section'):
-                query = query.where('params.section', '==', params.get('section'))
-            if params.get('label'):
-                query = query.where('params.label', '==', params.get('label'))
-
             docs = list(query.stream())
             if not docs:
                 return {
@@ -309,8 +299,32 @@ def validate_schema(payload):
                     "message": f"⚠️ Evento '{event_name}' não documentado no mapa de coleta."
                 }
 
-            # usa o primeiro documento que corresponde aos filtros
-            doc_dict = docs[0].to_dict()
+            # Se houver múltiplos docs com mesmo event_name, tenta encontrar o mais específico
+            # baseado nos parâmetros fornecidos (page_path, title, section, label)
+            best_match = None
+            max_matches = 0
+            
+            for doc in docs:
+                doc_data = doc.to_dict()
+                doc_params = doc_data.get('params', {})
+                matches = 0
+                
+                # Conta quantos parâmetros de contexto batem
+                if params.get('page_path') and doc_params.get('page_path') == params.get('page_path'):
+                    matches += 1
+                if params.get('title') and doc_params.get('title') == params.get('title'):
+                    matches += 1
+                if params.get('section') and doc_params.get('section') == params.get('section'):
+                    matches += 1
+                if params.get('label') and doc_params.get('label') == params.get('label'):
+                    matches += 1
+                
+                if matches > max_matches:
+                    max_matches = matches
+                    best_match = doc_data
+            
+            # Se não encontrou match específico, usa o primeiro documento
+            doc_dict = best_match if best_match else docs[0].to_dict()
 
         expected_params = doc_dict.get('params', {})
         issues = []
@@ -320,8 +334,13 @@ def validate_schema(payload):
                 issues.append(f"Parâmetro esperado ausente: {key}")
                 continue
 
-            if params.get(key) != value:
-                issues.append(f"Valor de '{key}' inválido. Esperado: {value}, recebido: {params.get(key)}")
+            # Comparar valores apenas se ambos existirem
+            expected_value = expected_params.get(key)
+            actual_value = params.get(key)
+            
+            # Só valida se o valor esperado não for None/vazio
+            if expected_value is not None and expected_value != "" and actual_value != expected_value:
+                issues.append(f"Valor de '{key}' inválido. Esperado: '{expected_value}', recebido: '{actual_value}'")
 
         if issues:
             return {"status": "ERROR", "layer": "Schema", "issues": issues}
@@ -334,19 +353,21 @@ def validate_schema(payload):
 def validate_google_mp(payload):
     """Layer 4: Envia para Google Analytics Debug Protocol."""
     meas_id = payload.get('measurement_id')
-    api_secret = payload.get('api_secret')
+    api_secret = payload.get('measurement_protocol_api_secret')
     
     if not meas_id or not api_secret:
-        return {"status": "SKIPPED", "layer": "Google Protocol", "message": "Sem credenciais GA4."}
+        return {"status": "SKIPPED", "layer": "Google Protocol", "message": "Sem credenciais para o Measurement Protocol."}
 
     ga4_payload = {
-        "client_id": payload.get("client_id", "test_user"),
+        "client_id": payload.get("params", {}).get("client_id", "test_user"),
         "timestamp_micros": payload.get("timestamp_micros"),
+        "validation_behavior": "ENFORCE_RECOMMENDATIONS",
         "events": [{
             "name": payload.get("event_name"),
             "params": payload.get("params", {})
         }]
     }
+    # return {"status": "INFO", "layer": "Google Protocol", "message": str(ga4_payload)}
 
     url = f"https://www.google-analytics.com/debug/mp/collect?measurement_id={meas_id}&api_secret={api_secret}"
     
@@ -518,6 +539,9 @@ def validate():
             measurement_id:
               type: string
               example: "G-NF7LZK2M10"
+            measurement_protocol_api_secret:
+                type: string
+                example: "xYZ123abcDEF456ghi789JKL"
             api_secret:
               type: string
               example: "7IrA3QyPTJaCUe1edtAh3w"
@@ -551,9 +575,8 @@ def validate():
         if dedup_res:
             report["valid"] = False
             report["layers"]["deduplication"] = dedup_res
-            return jsonify(report), 200
-
-        report["layers"]["deduplication"] = {"status": "OK"}
+        else:
+            report["layers"]["deduplication"] = {"status": "OK"}
 
         # 2. Taxonomia
         tax_res = validate_taxonomy(payload)
@@ -582,11 +605,74 @@ def validate():
         else:
             report["layers"]["google_mp"] = {"status": "OK"}
 
-        return jsonify(report), 200
+        # Gerar versão legível
+        readable_report = _format_readable_report(report)
+        
+        return jsonify({
+            "summary": readable_report,
+            "details": report
+        }), 200
 
     except Exception as e:
         logger.error(f"Erro Fatal no validate_full: {e}", exc_info=True)
         return jsonify({"error": "Erro interno no servidor", "details": str(e)}), 500
+
+
+def _format_readable_report(report):
+    """Converte o relatório de validação em texto amigável"""
+    lines = []
+    
+    # Cabeçalho
+    status_emoji = "🟩" if report["valid"] else "🟥"
+    lines.append(f"{status_emoji} RESULTADO DA VALIDAÇÃO: {'APROVADO' if report['valid'] else 'REPROVADO'} {status_emoji}")
+    lines.append(f"\nEVENTO: {report['event']}")
+    lines.append("")
+    
+    # Camadas
+    layers = report.get("layers", {})
+    layer_names = {
+        "deduplication": "1️⃣ DEDUPLICAÇÃO",
+        "taxonomy": "2️⃣ TAXONOMIA",
+        "schema": "3️⃣ SCHEMA",
+        "google_mp": "4️⃣ GOOGLE MEASUREMENT PROTOCOL"
+    }
+    
+    for layer_key, layer_title in layer_names.items():
+        if layer_key not in layers:
+            continue
+            
+        layer_data = layers[layer_key]
+        status = layer_data.get("status", "UNKNOWN")
+        
+        if status == "OK":
+            lines.append(f"✅ {layer_title}")
+        elif status == "ERROR":
+            lines.append(f"❌ {layer_title}")
+            
+            # Mostrar detalhes do erro
+            if "issues" in layer_data:
+                for issue in layer_data["issues"]:
+                    lines.append(f"• {issue}")
+            elif "message" in layer_data:
+                lines.append(f"• {layer_data['message']}")
+            elif "google_feedback" in layer_data:
+                lines.append(f"• Feedback do Google:")
+                for msg in layer_data["google_feedback"]:
+                    lines.append(f" - {msg}")
+                    
+        elif status == "WARNING":
+            lines.append(f"{layer_title}: ⚠️ Aviso")
+            if "message" in layer_data:
+                lines.append(f"• {layer_data['message']}")
+                
+        elif status == "SKIPPED":
+            lines.append(f"{layer_title}: ⏭️ Pulado")
+            if "message" in layer_data:
+                lines.append(f"• {layer_data['message']}")
+        
+        lines.append("")
+    
+    return "\n".join(lines)
 
 
 
