@@ -62,16 +62,16 @@ open http://localhost:8080/apidocs
 │              (Web, tagging.js, GA4)                          │
 └────────────────────┬─────────────────────────────────────────┘
                      │
-┌────────────────────▼─────────────────────────────────────────┐
-│                  Flask API (:8080)                           │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  4-Layer Validation:                                 │   │
-│  │  1. Deduplication  (TTL Cache, 2s default)          │   │
-│  │  2. Taxonomy       (snake_case, reserved names)     │   │
-│  │  3. Schema         (Firestore rules)                │   │
-│  │  4. Google MP      (GA4 Debug Protocol)             │   │
-│  └──────────────────────────────────────────────────────┘   │
-└────────┬─────────────────────────────┬──────────────────────┘
+┌────────────────────▼───────────────────────────────────────┐
+│                  Flask API (:8080)                         │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  4-Layer Validation:                                 │  │
+│  │  1. Deduplication  (TTL Cache, 2s default)           │  │
+│  │  2. Taxonomy       (snake_case, reserved names)      │  │
+│  │  3. Schema         (Firestore rules)                 │  │ 
+│  │  4. Google MP      (GA4 Debug Protocol)              │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────┬─────────────────────────────┬────────────────────-┘
          │                             │
    ┌─────▼──────┐            ┌────────▼────────┐
    │  Firestore │            │   BigQuery      │
@@ -94,29 +94,29 @@ open http://localhost:8080/apidocs
 
 ## 🔧 Desenvolvimento Local
 
-### Estrutura do Projeto
+### Estrutura de pastas
 
 ```
 tagging-api/
 ├── api/
-│   ├── main.py              # Aplicação Flask principal
-│   ├── config.py            # Configuração central (versão, etc)
-│   ├── requirements.txt      # Dependências Python
-│   ├── Dockerfile           # Imagem Docker (produção)
-│   └── .dockerignore        # Arquivos excluídos do build
+│   ├── main.py                     # Aplicação Flask principal
+│   ├── config.py                   # Configuração central (versão, etc)
+│   ├── requirements.txt            # Dependências Python
+│   ├── Dockerfile                  # Imagem Docker (produção)
+│   └── .dockerignore               # Arquivos excluídos do build
 ├── deployment/
-│   ├── setup-credentials.sh         # Gerar key.json automaticamente
-│   ├── validate-credentials.sh      # Validar key.json
-│   ├── deploy.sh                    # Deploy manual no Cloud Run
-│   └── setup-github-actions.sh      # Configurar WIF
+│   ├── setup-credentials.sh        # Gerar key.json automaticamente
+│   ├── validate-credentials.sh     # Validar key.json
+│   ├── deploy.sh                   # Deploy manual no Cloud Run
+│   └── setup-github-actions.sh     # Configurar WIF
 ├── .github/workflows/
-│   └── deploy.yml           # CI/CD pipeline
-├── docker-compose.yml       # Composição local (development)
-├── Makefile                 # Comandos úteis
-├── .gitignore               # Excluir do repositório
-├── .dockerignore            # Excluir do Docker
-├── key.json                 # ⚠️ Credenciais (NUNCA comitar)
-└── README.md                # Este arquivo
+│   └── deploy.yml                  # CI/CD pipeline
+├── docker-compose.yml              # Composição local (development)
+├── Makefile                        # Comandos úteis
+├── .gitignore                      # Excluir do repositório
+├── .dockerignore                   # Excluir do Docker
+├── key.json                        # ⚠️ Credenciais (NUNCA comitar)
+└── README.md                       # Este arquivo
 ```
 
 ### Comandos Úteis
