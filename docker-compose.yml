@@ -1,4 +1,5 @@
-version: '3.8'
+#Versão da sintaxe do Docker Compose
+version: '3.8' 
 
 services:
   tagging-api:
@@ -12,15 +13,24 @@ services:
       - ./api:/app
       - ./key.json:/secrets/key.json:ro
     environment:
+      # Google Cloud
       - GOOGLE_CLOUD_PROJECT=tagging-api-481123
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/key.json
+      
+      # Flask
       - PYTHONUNBUFFERED=1
       - FLASK_ENV=development
       - FLASK_APP=main.py
-      # Deduplication cache settings (seconds and max entries)
+      
+      # CORS (em dev: "*", em prod: "https://dominio1.com,https://dominio2.com")
+      - CORS_ORIGINS=*
+      - CORS_MAX_AGE=86400
+      
+      # Deduplication cache (tempo em segundos, max entries)
       - DEDUP_TTL=2.0
       - DEDUP_MAXSIZE=1000
-      # Optional admin key for protected endpoints (set in production)
+      
+      # Security (deixe vazio em dev, configure em produção via GitHub Secrets)
       - ADMIN_KEY=
     command: python -m flask run --host=0.0.0.0 --port=8080 --reload
     restart: unless-stopped

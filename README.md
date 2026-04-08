@@ -150,6 +150,7 @@ make help                   # Listar todos os comandos
 | `DEDUP_MAXSIZE` | `1000` | Tamanho máximo do cache |
 | `ADMIN_KEY` | vazio | Chave para proteger `/clear-cache` |
 | `FLASK_ENV` | `development` | environment (development/production) |
+| `CORS_ORIGINS` | `*` | Origens CORS permitidas (separadas por vírgula em produção) |
 
 Para mudar:
 
@@ -158,7 +159,27 @@ Para mudar:
 environment:
   - DEDUP_TTL=5.0           # Aumentar janela
   - ADMIN_KEY=seu-secret    # Proteger endpoints
+  - CORS_ORIGINS=*          # Desenvolvimento: todas as origens
+  # Produção: CORS_ORIGINS=https://seu-dominio.com,https://app.seu-dominio.com
 ```
+
+### Configuração de CORS
+
+**Desenvolvimento (padrão):**
+```bash
+CORS_ORIGINS=*  # Permitir todas as origens
+```
+
+**Produção (restringido):**
+```bash
+# Separar múltiplos domínios por vírgula
+CORS_ORIGINS=https://seu-dominio.com,https://app.seu-dominio.com,https://api.seu-dominio.com
+```
+
+Quando `FLASK_ENV=production` e `CORS_ORIGINS` é configurado, o sistema:
+- ✅ Cache preflight por 24 horas (reduz requisições OPTIONS)
+- ✅ Apenas domínios específicos podem acessar a API
+- ✅ Melhor performance e segurança
 
 ### Versionamento
 
@@ -264,16 +285,28 @@ Copie os valores para GitHub Secrets em:
 - `WIF_PROVIDER`
 - `WIF_SERVICE_ACCOUNT`
 - `ADMIN_KEY` (gere com: `openssl rand -hex 32`)
+- `CORS_ORIGINS` (ex: `https://seu-dominio.com,https://app.seu-dominio.com`)
 
 **Deploy automático:**
 ```bash
 git push origin main  # Triggers CI/CD
 ```
 
+**Configurar CORS em Produção:**
+1. Vá para: `https://github.com/brunosilvino/tagging-api/settings/secrets/actions`
+2. Adicione um novo secret `CORS_ORIGINS`:
+   ```
+   https://seu-dominio.com,https://app.seu-dominio.com,https://api.seu-dominio.com
+   ```
+3. O workflow do GitHub Actions usará essa variável automaticamente
+
 ### Opção 2: Deploy Manual
 
 ```bash
 ./deployment/deploy.sh [TAG]
+
+# Com CORS configurado via variável de ambiente
+CORS_ORIGINS="https://seu-dominio.com" ./deployment/deploy.sh
 ```
 
 ### Monitoramento

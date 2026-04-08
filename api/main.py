@@ -19,14 +19,26 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configurar CORS
+# Configurar CORS com suporte a variáveis de ambiente
+FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
+CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*')
+
+# Em produção, CORS_ORIGINS pode ser uma lista separada por vírgula: "https://exemplo.com,https://app.exemplo.com"
+if FLASK_ENV == 'production' and CORS_ORIGINS != '*':
+    allowed_origins = [origin.strip() for origin in CORS_ORIGINS.split(',')]
+else:
+    allowed_origins = "*"  # Permitir todas as origens em desenvolvimento
+
 CORS(app, resources={
     r"/*": {
-        "origins": "*",  # Permite todas as origens em produção. Para restringir, use: ["https://seudominio.com"]
+        "origins": allowed_origins,
         "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "X-CLIENT-ID", "X-ADMIN-KEY"]
+        "allow_headers": ["Content-Type", "X-CLIENT-ID", "X-ADMIN-KEY"],
+        "max_age": 86400  # Cache preflight por 24 horas
     }
 })
+
+logger.info(f"CORS configurado para {FLASK_ENV}: origins={allowed_origins}")
 
 # Configuração do Swagger
 app.config['SWAGGER'] = {
@@ -247,14 +259,28 @@ def validate_schema(payload):
         return {"status": "SKIPPED", "message": "🔴 Firestore indisponível (Erro de conexão)"}
 
     try:
+        event_id = payload.get('event_id')
         event_name = payload.get('event_name')
         params = payload.get('params', {}) or {}
         metadata = payload.get('metadata') or {}
 
         doc_dict = None
 
-        # Se metadata contém map_id/map_version, compõe o doc_id igual ao loader
-        if metadata and metadata.get('map_id') and metadata.get('map_version'):
+        # 1. Busca exata por event_id (prioridade máxima)
+        if event_id:
+            doc_ref = db.collection(COLLECTION_NAME).document(event_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                doc_dict = doc.to_dict()
+            else:
+                return {
+                    "status": "WARNING",
+                    "layer": "Schema",
+                    "message": f"⚠️ event_id '{event_id}' não encontrado no mapa de coleta."
+                }
+
+        # 2. Busca exata por map_id/map_version (mantém lógica anterior)
+        elif metadata and metadata.get('map_id') and metadata.get('map_version'):
             map_id = metadata.get('map_id')
             map_version = metadata.get('map_version')
             page_path = metadata.get('page_path')
@@ -287,10 +313,8 @@ def validate_schema(payload):
                     "message": f"⚠️ Evento '{event_name}' não documentado para este contexto."
                 }
         else:
-            # Busca apenas por event_name (sem filtros de valores de parâmetros)
-            # Os valores dos parâmetros serão validados depois
+            # Busca por event_name
             query = db.collection(COLLECTION_NAME).where('event_name', '==', event_name)
-            
             docs = list(query.stream())
             if not docs:
                 return {
@@ -298,33 +322,49 @@ def validate_schema(payload):
                     "layer": "Schema",
                     "message": f"⚠️ Evento '{event_name}' não documentado no mapa de coleta."
                 }
-
-            # Se houver múltiplos docs com mesmo event_name, tenta encontrar o mais específico
-            # baseado nos parâmetros fornecidos (page_path, title, section, label)
+            # Busca aproximada: retorna opções possíveis para cada parâmetro divergente
             best_match = None
             max_matches = 0
-            
+            param_options = {k: set() for k in params.keys() if k != 'event_name'}
             for doc in docs:
                 doc_data = doc.to_dict()
                 doc_params = doc_data.get('params', {})
+                print("doc_data",doc_data)
+                print("doc_params",doc_params)
                 matches = 0
-                
-                # Conta quantos parâmetros de contexto batem
-                if params.get('page_path') and doc_params.get('page_path') == params.get('page_path'):
-                    matches += 1
-                if params.get('title') and doc_params.get('title') == params.get('title'):
-                    matches += 1
-                if params.get('section') and doc_params.get('section') == params.get('section'):
-                    matches += 1
-                if params.get('label') and doc_params.get('label') == params.get('label'):
-                    matches += 1
-                
+                for k, v in params.items():
+                    if k == 'event_name':
+                        continue
+                    expected = doc_params.get(k)
+                    actual = v
+                    if expected is None:
+                        continue
+                    # Se o valor   esperado tem % ou {{...}}, só compara prefixo
+                    idxs = [i for i in [str(expected).find('%'), str(expected).find('{{')] if i != -1]
+                    if idxs:
+                        min_idx = min(idxs)
+                        if min_idx == 0 or str(expected)[:min_idx] == str(actual)[:min_idx]:
+                            matches += 1
+                        else:
+                            param_options[k].add(expected)
+                    elif str(expected) == str(actual):
+                        matches += 1
+                    else:
+                        param_options[k].add(expected)
                 if matches > max_matches:
                     max_matches = matches
                     best_match = doc_data
-            
-            # Se não encontrou match específico, usa o primeiro documento
             doc_dict = best_match if best_match else docs[0].to_dict()
+
+            # Se houver divergências, retorna opções possíveis para cada parâmetro
+            suggestions = {k: sorted(list(v)) for k, v in param_options.items() if v}
+            if suggestions:
+                return {
+                    "status": "SUGGESTIONS",
+                    "layer": "Schema",
+                    "message": "Valores aproximados encontrados para parâmetros divergentes.",
+                    "suggestions": suggestions
+                }
 
         expected_params = doc_dict.get('params', {})
         issues = []
@@ -535,7 +575,7 @@ def validate():
           properties:
             event_name:
               type: string
-              example: "select_content"
+              example: "click"
             measurement_id:
               type: string
               example: "G-NF7LZK2M10"
@@ -547,9 +587,12 @@ def validate():
               example: "7IrA3QyPTJaCUe1edtAh3w"
             params:
               type: object
-              example: 
-                content_type: "article"
-                item_id: "12345"
+              example:
+                map_id: "00001"
+                map_version: 20260105 
+                page_path: "/"
+                section: "header"
+                label: "botao:seta-baixo"
     responses:
       200:
         description: Relatório de Validação
@@ -588,7 +631,7 @@ def validate():
 
         # 3. Schema (Firestore)
         schema_res = validate_schema(payload)
-        if schema_res and schema_res.get('status') == "ERROR":
+        if schema_res and schema_res.get('status') in ["ERROR","WARNING"]:
             report["valid"] = False
             report["layers"]["schema"] = schema_res
         elif schema_res: # Warning or Skipped
