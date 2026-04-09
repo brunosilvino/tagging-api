@@ -4,13 +4,14 @@ import json
 import hashlib
 import requests
 import re
+from urllib.parse import quote_plus
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from google.cloud import firestore
 from google.cloud import bigquery
 from cachetools import TTLCache
 from flasgger import Swagger
 import threading
+import redis
 from config import __version__, APP_NAME, APP_DESCRIPTION
 
 # --- CONFIGURAÇÃO ---
@@ -50,19 +51,37 @@ app.config['SWAGGER'] = {
 swagger = Swagger(app)
 
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-COLLECTION_NAME = 'analytics_event_rules'
 BQ_TABLE = "tagging-api-481123.tagging_maps.collection_maps"
+REDIS_URL = os.environ.get("REDIS_URL")
+REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+REDIS_DB = int(os.environ.get("REDIS_DB", 0))
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
+REDIS_PREFIX = os.environ.get("REDIS_PREFIX", "tagging-api")
 
 # Inicialização de Clientes (Robusta)
-db = None
+redis_client = None
 bq_client = None
 
 try:
-    db = firestore.Client(project="tagging-api-481123")
     bq_client = bigquery.Client(project=PROJECT_ID)
+    if REDIS_URL:
+        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    else:
+        redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=REDIS_DB,
+            password=REDIS_PASSWORD or None,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+            health_check_interval=30,
+        )
+    redis_client.ping()
     logger.info(f"{APP_NAME} v{__version__} - Clientes GCP inicializados.")
 except Exception as e:
-    logger.error(f"Erro ao inicializar GCP Clients (Verifique key.json): {e}")
+    logger.error(f"Erro ao inicializar clientes (verifique BigQuery/Redis): {e}")
 
 # Cache para Deduplicação (Layer 1) - TTL de 2 segundos
 DEDUP_TTL = float(os.environ.get('DEDUP_TTL', 2.0))
@@ -71,6 +90,37 @@ dedup_cache = TTLCache(maxsize=DEDUP_MAXSIZE, ttl=DEDUP_TTL)
 dedup_lock = threading.Lock()
 
 # --- FUNÇÕES AUXILIARES ---
+def _safe_key(value):
+    return quote_plus(str(value))
+
+
+def _slugify(*parts):
+    raw = "_".join([str(p) for p in parts if p is not None and p != ""])
+    slug = re.sub(r'[^A-Za-z0-9]+', '_', raw)
+    slug = re.sub(r'_+', '_', slug).strip('_')
+    return slug[:200]
+
+
+def _rule_key(event_id):
+    return f"{REDIS_PREFIX}:rule:{event_id}"
+
+
+def _meta_key(event_id):
+    return f"{REDIS_PREFIX}:meta:{event_id}"
+
+
+def _event_index_key(event_name):
+    return f"{REDIS_PREFIX}:event_name:{_safe_key(event_name).lower()}"
+
+
+def _map_index_key(map_id, map_version):
+    return f"{REDIS_PREFIX}:map:{_safe_key(map_id)}:{_safe_key(map_version)}"
+
+
+def _redis_available():
+    return redis_client is not None
+
+
 def fetch_map_from_bigquery(map_id=None, map_version=None):
     """
     Vai ao BigQuery, busca as regras e transforma em formato Hierárquico (JSON).
@@ -80,20 +130,24 @@ def fetch_map_from_bigquery(map_id=None, map_version=None):
     if not map_id:
         raise ValueError("map_id é obrigatório para carregar um mapa específico!")
 
-    map_version = f"map_id = '{map_version}'" if isinstance(map_version, int) else 'map_is IS NULL'
-
-    # Query SQL para pegar os dados planos
-    # Assumindo colunas: event_name, param_name, param_type, regex_pattern, is_required
+    # Query SQL com parâmetros para evitar erro de aspas e injeção acidental
+    map_version_query = "@map_version" if map_version is not None else f"(SELECT MAX(map_version) FROM `{BQ_TABLE}` WHERE map_id = @map_id)"
+    
     query = f"""
         SELECT *
         FROM `{BQ_TABLE}`
-        WHERE {map_id}'
-        AND map_version {map_version}
-        OR map_version = (SELECT MAX(map_version) FROM `{BQ_TABLE}` WHERE map_id = '{map_id}')
+        WHERE map_id = @map_id
+        AND map_version = {map_version_query}
         LIMIT 500
     """
 
-    query_job = bq_client.query(query)
+    query_params = [
+        bigquery.ScalarQueryParameter("map_id", "STRING", str(map_id)),
+        bigquery.ScalarQueryParameter("map_version", "STRING", str(map_version) if map_version is not None else None),
+    ]
+    job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+
+    query_job = bq_client.query(query, job_config=job_config)
     rows = list(query_job.result())
 
     # Transformação: cada linha é 'wide' — tem colunas de metadados + colunas de parâmetros.
@@ -132,13 +186,14 @@ def fetch_map_from_bigquery(map_id=None, map_version=None):
         params = {k: v for k, v in row_dict.items() if k not in meta_keys and v is not None}
 
         # Definir uma chave única composta (usa alguns campos também presentes em params)
-        if evt.lower() in ('page_view', 'pageview', 'page_view_event'):
+        if evt.lower() in ('page_view', 'pageview', 'page_view_event', 'screen_name'):
             unique_part = title or page_path or ''
         else:
             unique_part = (section or '') + '_' + (label or '')
 
         doc_id = _slugify(map_id, map_version, evt, page_path or '', unique_part)
 
+        #Define o schema das coleções
         doc_body = {
             "metadata": {
                 "map_id": map_id,
@@ -152,41 +207,119 @@ def fetch_map_from_bigquery(map_id=None, map_version=None):
 
     return events_cache
 
-def update_firestore_cache(events_data, map_id=None, map_version=None):
+def update_redis_cache(events_data, map_id=None, map_version=None):
     """
-    Grava os dados transformados no Firestore em lote (Batch).
-    Se map_id e map_version forem fornecidos, remove os documentos antigos
-    que correspondem a essa versão antes de inserir os novos.
+    Grava os dados transformados no Redis.
+    Se map_id e map_version forem fornecidos, limpa o índice antigo desse mapa.
     """
-    batch = db.batch()
-    count = 0
+    if not _redis_available():
+        raise RuntimeError("Redis indisponível")
 
-    # Se map_id e map_version foram fornecidos, deleta os docs antigos dessa versão
+    # Cria um pipeline para agrupar operações no Redis e executá-las em lote
+    pipeline = redis_client.pipeline()
+
+    # Se map_id e map_version foram informados, remove o índice anterior desse mapa
     if map_id and map_version:
-        query = db.collection(COLLECTION_NAME).where('metadata.map_id', '==', map_id).where('metadata.map_version', '==', map_version)
-        old_docs = list(query.stream())
-        for doc in old_docs:
-            batch.delete(doc.reference)
-            count += 1
-            if count >= 400:
-                batch.commit()
-                batch = db.batch()
-                count = 0
-    
-    # Insere os novos documentos
-    for event_name, rules in events_data.items():
-        doc_ref = db.collection(COLLECTION_NAME).document(event_name)
-        batch.set(doc_ref, rules)
-        count += 1
-        
-        # Firestore batch tem limite de 500 operações. Commit e reinicia se necessário.
-        if count >= 400: 
-            batch.commit()
-            batch = db.batch()
-            count = 0
-            
-    if count > 0:
-        batch.commit()
+        # Busca todos os event_id associados ao mapa anterior
+        previous_event_ids = redis_client.smembers(_map_index_key(map_id, map_version))
+        for event_id in previous_event_ids:
+            # Remove a regra e os metadados de cada evento antigo
+            pipeline.delete(_rule_key(event_id), _meta_key(event_id))
+        # Remove também o índice do mapa
+        pipeline.delete(_map_index_key(map_id, map_version))
+
+    # Percorre todos os eventos recebidos para gravar no Redis
+    for event_id, rules in events_data.items():
+        # Extrai metadados do evento
+        metadata = rules.get('metadata', {}) or {}
+        event_name = rules.get('event_name')
+        current_map_id = metadata.get('map_id')
+        current_map_version = metadata.get('map_version')
+
+        # Salva a regra completa do evento
+        pipeline.set(_rule_key(event_id), json.dumps(rules, ensure_ascii=False))
+
+        # Salva metadados separados para facilitar consultas futuras
+        pipeline.set(
+            _meta_key(event_id),
+            json.dumps(
+                {
+                    "map_id": current_map_id,
+                    "map_version": current_map_version,
+                    "event_name": event_name,
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        # Indexa o evento pelo nome para buscas rápidas
+        if event_name:
+            pipeline.sadd(_event_index_key(event_name), event_id)
+
+        # Indexa o evento por mapa e versão
+        if current_map_id is not None and current_map_version is not None:
+            pipeline.sadd(_map_index_key(current_map_id, current_map_version), event_id)
+
+    # Executa todas as operações acumuladas no Redis
+    pipeline.execute()
+
+
+def _load_rule_from_redis(event_id):
+    if not _redis_available():
+        return None
+
+    raw_rule = redis_client.get(_rule_key(event_id))
+    if not raw_rule:
+        return None
+
+    try:
+        return json.loads(raw_rule)
+    except json.JSONDecodeError:
+        logger.warning("Regra inválida no Redis para event_id=%s", event_id)
+        return None
+
+
+def _get_candidate_rules_by_event_name(event_name):
+    if not _redis_available():
+        return []
+
+    event_ids = list(redis_client.smembers(_event_index_key(event_name)))
+    if not event_ids:
+        return []
+
+    pipeline = redis_client.pipeline()
+    for event_id in event_ids:
+        pipeline.get(_rule_key(event_id))
+
+    raw_rules = pipeline.execute()
+    rules = []
+    for event_id, raw_rule in zip(event_ids, raw_rules):
+        if not raw_rule:
+            redis_client.srem(_event_index_key(event_name), event_id)
+            continue
+        try:
+            rules.append(json.loads(raw_rule))
+        except json.JSONDecodeError:
+            logger.warning("Ignorando regra inválida no Redis: %s", event_id)
+    return rules
+
+
+def _matches_expected(expected_value, actual_value):
+    if expected_value is None:
+        return True
+
+    expected_text = str(expected_value)
+    actual_text = str(actual_value)
+
+    if expected_text == actual_text:
+        return True
+
+    marker_positions = [idx for idx in [expected_text.find('%'), expected_text.find('{{')] if idx != -1]
+    if marker_positions:
+        prefix_end = min(marker_positions)
+        return prefix_end == 0 or expected_text[:prefix_end] == actual_text[:prefix_end]
+
+    return False
 # --- FUNÇÕES DE VALIDAÇÃO (LAYERS) ---
 
 def validate_deduplication(raw_payload, payload=None):
@@ -249,14 +382,14 @@ def validate_taxonomy(payload):
     return None
 
 def validate_schema(payload):
-    """Layer 3: Valida contra regras do mapa de coleta carregados no Firestore.
+    """Layer 3: Valida contra regras do mapa de coleta carregadas no Redis.
 
     Recebe o `payload` completo e usa `metadata` (se presente) para buscar o
     documento de forma precisa; caso contrário realiza uma busca baseada em
     `event_name` e possíveis campos presentes dentro de `params`.
     """
-    if not db:
-        return {"status": "SKIPPED", "message": "🔴 Firestore indisponível (Erro de conexão)"}
+    if not _redis_available():
+        return {"status": "SKIPPED", "message": "🔴 Redis indisponível (Erro de conexão)"}
 
     try:
         event_id = payload.get('event_id')
@@ -268,15 +401,14 @@ def validate_schema(payload):
 
         # 1. Busca exata por event_id (prioridade máxima)
         if event_id:
-            doc_ref = db.collection(COLLECTION_NAME).document(event_id)
-            doc = doc_ref.get()
-            if doc.exists:
-                doc_dict = doc.to_dict()
+            doc_dict = _load_rule_from_redis(event_id)
+            if doc_dict:
+                pass
             else:
                 return {
                     "status": "WARNING",
                     "layer": "Schema",
-                    "message": f"⚠️ event_id '{event_id}' não encontrado no mapa de coleta."
+                    "message": f"⚠️ event_id '{event_id}' não encontrado no cache de regras."
                 }
 
         # 2. Busca exata por map_id/map_version (mantém lógica anterior)
@@ -301,11 +433,10 @@ def validate_schema(payload):
                 unique_part = (section or '') + '_' + (label or '') + ('_' + (outbound or '') if outbound else '')
 
             doc_id = _slugify(map_id, map_version, event_name, page_path or '', unique_part)
-            doc_ref = db.collection(COLLECTION_NAME).document(doc_id)
-            doc = doc_ref.get()
+            doc_dict = _load_rule_from_redis(doc_id)
 
-            if doc.exists:
-                doc_dict = doc.to_dict()
+            if doc_dict:
+                pass
             else:
                 return {
                     "status": "WARNING",
@@ -313,24 +444,19 @@ def validate_schema(payload):
                     "message": f"⚠️ Evento '{event_name}' não documentado para este contexto."
                 }
         else:
-            # Busca por event_name
-            query = db.collection(COLLECTION_NAME).where('event_name', '==', event_name)
-            docs = list(query.stream())
+            docs = _get_candidate_rules_by_event_name(event_name)
             if not docs:
                 return {
                     "status": "WARNING",
                     "layer": "Schema",
-                    "message": f"⚠️ Evento '{event_name}' não documentado no mapa de coleta."
+                    "message": f"⚠️ Evento '{event_name}' não documentado no cache de regras."
                 }
             # Busca aproximada: retorna opções possíveis para cada parâmetro divergente
             best_match = None
             max_matches = 0
             param_options = {k: set() for k in params.keys() if k != 'event_name'}
-            for doc in docs:
-                doc_data = doc.to_dict()
+            for doc_data in docs:
                 doc_params = doc_data.get('params', {})
-                print("doc_data",doc_data)
-                print("doc_params",doc_params)
                 matches = 0
                 for k, v in params.items():
                     if k == 'event_name':
@@ -339,22 +465,14 @@ def validate_schema(payload):
                     actual = v
                     if expected is None:
                         continue
-                    # Se o valor   esperado tem % ou {{...}}, só compara prefixo
-                    idxs = [i for i in [str(expected).find('%'), str(expected).find('{{')] if i != -1]
-                    if idxs:
-                        min_idx = min(idxs)
-                        if min_idx == 0 or str(expected)[:min_idx] == str(actual)[:min_idx]:
-                            matches += 1
-                        else:
-                            param_options[k].add(expected)
-                    elif str(expected) == str(actual):
+                    if _matches_expected(expected, actual):
                         matches += 1
                     else:
                         param_options[k].add(expected)
                 if matches > max_matches:
                     max_matches = matches
                     best_match = doc_data
-            doc_dict = best_match if best_match else docs[0].to_dict()
+            doc_dict = best_match if best_match else docs[0]
 
             # Se houver divergências, retorna opções possíveis para cada parâmetro
             suggestions = {k: sorted(list(v)) for k, v in param_options.items() if v}
@@ -387,7 +505,7 @@ def validate_schema(payload):
         return None
 
     except Exception as e:
-        logger.error(f"Erro ao ler Firestore: {e}")
+        logger.error(f"Erro ao ler Redis: {e}")
         return {"status": "ERROR", "layer": "Schema", "message": str(e)}
 
 def validate_google_mp(payload):
@@ -446,7 +564,7 @@ def health_check():
 @app.route('/loadmap', methods=['POST'])
 def refresh_rules():
     """
-    Cold Start: Carrega regras do BigQuery para o Firestore
+    Cold Start: Carrega regras do BigQuery para o Redis
     ---
     tags:
       - Carregar mapa
@@ -460,9 +578,9 @@ def refresh_rules():
             map_id:
               type: string
               description: "Versão específica do mapa a carregar (opcional)"
-              example: "v1.0"
+              example: "00001"
           example:
-            map_id: "v1.0"
+            map_id: "00001"
     responses:
       200:
         description: Cache atualizado com sucesso
@@ -505,7 +623,7 @@ def refresh_rules():
         map_version = payload.get('map_id') or first_doc.get('metadata', {}).get('map_version')
 
         # 2. Atualiza Cache (remove antigos do mesmo map_id/map_version e insere novos)
-        update_firestore_cache(events_data, map_id=map_id, map_version=map_version)
+        update_redis_cache(events_data, map_id=map_id, map_version=map_version)
         
         return jsonify({
             "status": "SUCCESS", 
@@ -520,8 +638,8 @@ def refresh_rules():
 @app.route('/clear-cache', methods=['POST'])
 def clear_cache():
     
-    if not db:
-        return jsonify({"error": "Firestore indisponível"}), 500
+    if not _redis_available():
+        return jsonify({"error": "Redis indisponível"}), 500
 
     try:
         admin_key = os.environ.get('ADMIN_KEY')
@@ -537,18 +655,12 @@ def clear_cache():
         if not payload or not payload.get('confirm'):
             return jsonify({"error": "Operation not confirmed. Send {\"confirm\": true}"}), 400
 
-        # Delete documents in batches without materializing the entire collection
         deleted = 0
-        batch = db.batch()
-        for i, doc_ref in enumerate(db.collection(COLLECTION_NAME).list_documents(), start=1):
-            batch.delete(doc_ref)
-            deleted += 1
-            if deleted % 400 == 0:
-                batch.commit()
-                batch = db.batch()
-
-        if deleted % 400 != 0:
-            batch.commit()
+        keys = list(redis_client.scan_iter(match=f"{REDIS_PREFIX}:*"))
+        for start in range(0, len(keys), 500):
+            chunk = keys[start:start + 500]
+            if chunk:
+                deleted += redis_client.delete(*chunk)
 
         return jsonify({"status": "SUCCESS", "deleted": deleted}), 200
 
@@ -629,7 +741,7 @@ def validate():
         else:
             report["layers"]["taxonomy"] = {"status": "OK"}
 
-        # 3. Schema (Firestore)
+        # 3. Schema (Redis)
         schema_res = validate_schema(payload)
         if schema_res and schema_res.get('status') in ["ERROR","WARNING"]:
             report["valid"] = False

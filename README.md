@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Docker](https://img.shields.io/badge/docker-ready-brightgreen)
 
-API Flask para validação de eventos de Analytics com suporte a BigQuery, Firestore, deduplicação por sessão e integração com Google Analytics 4 (GA4).
+API Flask para validação de eventos de Analytics com suporte a BigQuery, Redis, deduplicação por sessão e integração com Google Analytics 4 (GA4).
 
 ## 📋 Índice
 
@@ -68,15 +68,15 @@ open http://localhost:8080/apidocs
 │  │  4-Layer Validation:                                 │  │
 │  │  1. Deduplication  (TTL Cache, 2s default)           │  │
 │  │  2. Taxonomy       (snake_case, reserved names)      │  │
-│  │  3. Schema         (Firestore rules)                 │  │ 
+│  │  3. Schema         (Redis rules cache)                │  │ 
 │  │  4. Google MP      (GA4 Debug Protocol)              │  │
 │  └──────────────────────────────────────────────────────┘  │
 └────────┬─────────────────────────────┬────────────────────-┘
          │                             │
-   ┌─────▼──────┐            ┌────────▼────────┐
-   │  Firestore │            │   BigQuery      │
-   │ (rules)    │            │  (analytics)    │
-   └────────────┘            └─────────────────┘
+  ┌─────▼──────┐            ┌────────▼────────┐
+  │   Redis    │            │   BigQuery      │
+  │ (rules)    │            │  (analytics)    │
+  └────────────┘            └─────────────────┘
 ```
 
 ### Componentes
@@ -86,7 +86,7 @@ open http://localhost:8080/apidocs
 | **Flask API** | Servidor HTTP em Python |
 | **Deduplication** | Cache TTL para evitar eventos duplicados |
 | **Taxonomy Validation** | Verifica padrões de nomenclatura |
-| **Firestore** | Armazena regras de validação |
+| **Redis** | Armazena regras de validação em cache |
 | **BigQuery** | Carrega dados analíticos |
 | **Docker** | Containerização (Python 3.10-slim + Gunicorn) |
 
@@ -132,6 +132,9 @@ make up                     # Iniciar containers
 make down                   # Parar containers
 make logs                   # Ver logs
 
+# RedisInsight
+open http://localhost:5540   # Interface visual do Redis local
+
 # Diagrama de arquitetura
 make diagram                # Gerar PNG da arquitetura
 make clean                  # Limpar arquivos gerados
@@ -151,6 +154,20 @@ make help                   # Listar todos os comandos
 | `ADMIN_KEY` | vazio | Chave para proteger `/clear-cache` |
 | `FLASK_ENV` | `development` | environment (development/production) |
 | `CORS_ORIGINS` | `*` | Origens CORS permitidas (separadas por vírgula em produção) |
+| `REDIS_HOST` | `redis` | Host do Redis local |
+| `REDIS_PORT` | `6379` | Porta do Redis |
+| `REDIS_DB` | `0` | Base Redis |
+| `REDIS_PREFIX` | `tagging-api` | Prefixo dos keys |
+
+### RedisInsight
+
+Se o `docker-compose.yml` estiver rodando, a interface visual do Redis fica em:
+
+```bash
+http://localhost:5540
+```
+
+O RedisInsight se conecta ao serviço `redis` da stack local e permite inspecionar chaves, valores, TTLs e estruturas como sets e hashes.
 
 Para mudar:
 
@@ -242,7 +259,7 @@ curl -X POST http://localhost:8080/validate \
 
 ### Carregar Mapa (POST /loadmap)
 
-Carrega regras do BigQuery para Firestore:
+Carrega regras do BigQuery para Redis:
 
 ```bash
 curl -X POST http://localhost:8080/loadmap \

@@ -2,6 +2,24 @@
 version: '3.8' 
 
 services:
+  redis:
+    container_name: redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  redisinsight:
+    container_name: redisinsight
+    image: redis/redisinsight:latest
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
   tagging-api:
     container_name: tagging-api
     build:
@@ -16,6 +34,10 @@ services:
       # Google Cloud
       - GOOGLE_CLOUD_PROJECT=tagging-api-481123
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/key.json
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PREFIX=tagging-api
       
       # Flask
       - PYTHONUNBUFFERED=1
@@ -32,5 +54,10 @@ services:
       
       # Security (deixe vazio em dev, configure em produção via GitHub Secrets)
       - ADMIN_KEY=
+    depends_on:
+      - redis
     command: python -m flask run --host=0.0.0.0 --port=8080 --reload
     restart: unless-stopped
+
+volumes:
+  redisinsight_data:
