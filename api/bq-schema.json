@@ -1,0 +1,62 @@
+[
+    {
+        "name": "map_version",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "Versão do mapa"
+    },
+    {
+        "name": "map_id",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "ID do mapa"
+    },
+    {
+        "name": "event_name",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "Nome do evento"
+    },
+    {
+        "name": "page_path",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Caminho da página"
+    },
+    {
+        "name": "title",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Título da página"
+    },
+    {
+        "name": "section",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Seção da página"
+    },
+    {
+        "name": "component",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Componente"
+    },
+    {
+        "name": "label",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Rótulo do evento"
+    },
+    {
+        "name": "outbound",
+        "type": "BOOLEAN",
+        "mode": "NULLABLE",
+        "description": "É link externo?"
+    },
+    {
+        "name": "event_id",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "ID do evento"
+    }
+]

@@ -31,7 +31,7 @@ if command -v jq &> /dev/null; then
     echo "✓ JSON válido"
     
     # Verificar campos obrigatórios
-    for field in "type" "project_id" "private_key_id" "private_key" "client_email" "client_id"; do
+    for field in "type" "project_id" "private_key_id" "private_key" "client_email" "client_id" "measurement_protocol_api_secret"; do
         if ! jq -e ".$field" "$KEY_PATH" > /dev/null 2>&1; then
             echo "❌ Campo obrigatório faltando: $field"
             exit 1
@@ -52,7 +52,7 @@ else
     echo "✓ JSON válido"
     
     # Verificar se arquivo contém campos obrigatórios
-    for field in "type" "project_id" "private_key_id" "private_key" "client_email" "client_id"; do
+    for field in "type" "project_id" "private_key_id" "private_key" "client_email" "client_id" "measurement_protocol_api_secret"; do
         if ! grep -q "\"$field\"" "$KEY_PATH"; then
             echo "❌ Campo obrigatório faltando: $field"
             exit 1
@@ -75,11 +75,18 @@ echo ""
 # Tentar validar com gcloud (opcional)
 if command -v gcloud &> /dev/null; then
     echo "🔐 Testando autenticação..."
+    PREVIOUS_ACCOUNT=$(gcloud auth list --filter="status:ACTIVE" --format="value(account)" 2>/dev/null | head -n 1)
     if gcloud auth activate-service-account --key-file="$KEY_PATH" --quiet 2>/dev/null; then
         echo "✓ Autenticação bem-sucedida"
     else
         echo "⚠️  Aviso: Falha ao autenticar com gcloud"
         echo "   (Pode ser normalmente ignorado em CI/CD)"
+    fi
+
+    if [ -n "$PREVIOUS_ACCOUNT" ]; then
+        gcloud config set account "$PREVIOUS_ACCOUNT" --quiet >/dev/null 2>&1 || true
+    else
+        gcloud config unset account --quiet >/dev/null 2>&1 || true
     fi
 fi
 

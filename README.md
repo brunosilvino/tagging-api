@@ -51,7 +51,6 @@ curl http://localhost:8080/
 # Swagger UI
 open http://localhost:8080/apidocs
 ```
-
 ---
 
 ## 🏗️ Arquitetura
@@ -68,15 +67,15 @@ open http://localhost:8080/apidocs
 │  │  4-Layer Validation:                                 │  │
 │  │  1. Deduplication  (TTL Cache, 2s default)           │  │
 │  │  2. Taxonomy       (snake_case, reserved names)      │  │
-│  │  3. Schema         (Redis rules cache)                │  │ 
+│  │  3. Schema         (Redis rules cache)               │  │ 
 │  │  4. Google MP      (GA4 Debug Protocol)              │  │
 │  └──────────────────────────────────────────────────────┘  │
-└────────┬─────────────────────────────┬────────────────────-┘
-         │                             │
-  ┌─────▼──────┐            ┌────────▼────────┐
-  │   Redis    │            │   BigQuery      │
-  │ (rules)    │            │  (analytics)    │
-  └────────────┘            └─────────────────┘
+└─────────┬────────────────────────────┬────────────────────-┘
+          │                            │
+    ┌─────▼──────┐            ┌────────▼────────┐
+    │   Redis    │            │    BigQuery     │
+    │  (rules)   │            │   (analytics)   │
+    └────────────┘            └─────────────────┘
 ```
 
 ### Componentes
@@ -128,9 +127,15 @@ make validate-creds         # Validar credenciais
 
 # Docker
 make build                  # Build da imagem
+make api                    # Rebuild e reiniciar somente o tagging-api
+make redis                  # Recriar os containers redis e redisinsight
 make up                     # Iniciar containers
 make down                   # Parar containers
 make logs                   # Ver logs
+
+# Equivalente sem Makefile
+docker compose up -d --build --no-deps tagging-api
+docker compose up -d --force-recreate --no-deps redis redisinsight
 
 # RedisInsight
 open http://localhost:5540   # Interface visual do Redis local
@@ -158,6 +163,10 @@ make help                   # Listar todos os comandos
 | `REDIS_PORT` | `6379` | Porta do Redis |
 | `REDIS_DB` | `0` | Base Redis |
 | `REDIS_PREFIX` | `tagging-api` | Prefixo dos keys |
+
+O `make setup-creds` solicita o `measurement_protocol_api_secret` sem exibi-lo e
+grava o valor no `key.json`, que é ignorado pelo Git e montado somente no ambiente
+local. O cliente não deve enviar esse segredo no payload.
 
 ### RedisInsight
 
@@ -240,6 +249,7 @@ Valida eventos com 4 camadas:
 ```bash
 curl -X POST http://localhost:8080/validate \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer local-development-key" \
   -d '{
     "event_name": "select_content",
     "params": {
@@ -247,9 +257,10 @@ curl -X POST http://localhost:8080/validate \
       "item_id": "12345"
     },
     "measurement_id": "G-NF7LZK2M10",
-    "api_secret": "7IrA3QyPTJaCUe1edtAh3w"
   }'
 ```
+
+O endpoint exige a chave da API no header `Authorization` como `Bearer`. Configure o mesmo valor em `API_KEY` no backend. Não envie a chave de autenticação dentro do JSON.
 
 **Camadas de Validação:**
 1. **Deduplication** - Evento duplicado em curto intervalo?
@@ -257,15 +268,61 @@ curl -X POST http://localhost:8080/validate \
 3. **Schema** - Atende regras do Firestore?
 4. **Google MP** - Envia para GA4 Debug Protocol?
 
-### Carregar Mapa (POST /loadmap)
+### Carregar Mapas (POST /loadmaps)
 
-Carrega regras do BigQuery para Redis:
+Carrega regras de vários mapas do BigQuery para o Redis em sequência:
 
 ```bash
-curl -X POST http://localhost:8080/loadmap \
+curl -X POST http://localhost:8080/loadmaps \
   -H "Content-Type: application/json" \
-  -d '{"map_id": "00001"}'
+  -d '["00001", "00002"]'
 ```
+
+A resposta informa o resultado individual de cada mapa. Em caso de falha parcial, o endpoint retorna HTTP `207` e mantém o processamento dos demais mapas.
+
+### Consultar Evento (GET /event)
+
+Retorna todos os parâmetros e metadados de um evento pelo `event_id`:
+
+```bash
+curl "http://localhost:8080/event?event_id=00001_20260105_page_view_Martech_Cachorro"
+```
+
+### Consultar Eventos de um Mapa (GET /map)
+
+Retorna todos os eventos carregados de um `map_id`. `map_version` é opcional:
+
+```bash
+curl "http://localhost:8080/map?map_id=00002"
+curl "http://localhost:8080/map?map_id=00001&map_version=20260105"
+```
+
+### Consultar Eventos por Parâmetro (GET /events)
+
+Retorna eventos cujo parâmetro possui exatamente o valor informado. Por exemplo:
+
+```bash
+curl "http://localhost:8080/events?event_action=click"
+```
+
+O mapa é lido da tabela externa `tagging_maps.collection_maps_sheets`, que usa uma planilha do Google Sheets. A planilha precisa estar compartilhada com a conta de serviço usada pela API:
+
+```text
+developer@tagging-api-481123.iam.gserviceaccount.com
+```
+
+Para o acesso funcionar, habilite as APIs e conceda permissão para executar consultas:
+
+```bash
+gcloud services enable bigquery.googleapis.com drive.googleapis.com \
+  --project=tagging-api-481123
+
+gcloud projects add-iam-policy-binding tagging-api-481123 \
+  --member="serviceAccount:developer@tagging-api-481123.iam.gserviceaccount.com" \
+  --role="roles/bigquery.jobUser"
+```
+
+Na planilha de regras, use **Compartilhar** e adicione a mesma conta de serviço como **Leitor**. Depois recrie o `key.json` com `make setup-creds`, reinicie os containers e teste novamente com `map_id` `00002`.
 
 ### Limpar Cache (POST /clear-cache)
 
@@ -302,6 +359,7 @@ Copie os valores para GitHub Secrets em:
 - `WIF_PROVIDER`
 - `WIF_SERVICE_ACCOUNT`
 - `ADMIN_KEY` (gere com: `openssl rand -hex 32`)
+- `MEASUREMENT_PROTOCOL_API_SECRET` (secret do Google Analytics Measurement Protocol)
 - `CORS_ORIGINS` (ex: `https://seu-dominio.com,https://app.seu-dominio.com`)
 
 **Deploy automático:**
@@ -356,12 +414,18 @@ curl "$URL/"
 - Segredos passados via `docker compose` ou Cloud Run
 - Nunca hardcoded no código
 
+✅ **Measurement Protocol:**
+- Desenvolvimento: `measurement_protocol_api_secret` dentro do `key.json` local
+- Produção: secret `MEASUREMENT_PROTOCOL_API_SECRET` do GitHub Actions, injetado no Cloud Run
+- O segredo nunca é aceito no payload nem enviado pelo navegador
+
 ✅ **Authentication:**
 - Desenvolvimento: Conta de serviço local (`developer@tagging-api-481123`)
 - Produção: Workload Identity Federation (sem chaves)
 
 ✅ **Endpoints Protegidos:**
-- `/clear-cache` requer header `X-ADMIN-KEY`
+- Todos os endpoints da API exigem `Authorization: Bearer <API_KEY>`.
+- O endpoint de limpeza de cache também exige `X-ADMIN-KEY` quando `ADMIN_KEY` estiver configurada.
 
 ### Geração de Credenciais Segura
 

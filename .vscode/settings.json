@@ -4,5 +4,6 @@
         "text": "All commit messages must be in Brazilian Portuguese."
     }
         
-    ]
+    ],
+    "makefile.configureOnOpen": false
 }

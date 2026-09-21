@@ -1,6 +1,3 @@
-#Versão da sintaxe do Docker Compose
-version: '3.8' 
-
 services:
   redis:
     container_name: redis
@@ -38,6 +35,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=0
       - REDIS_PREFIX=tagging-api
+      - REDIS_URL=redis://default@redis:6379
       
       # Flask
       - PYTHONUNBUFFERED=1
@@ -47,6 +45,9 @@ services:
       # CORS (em dev: "*", em prod: "https://dominio1.com,https://dominio2.com")
       - CORS_ORIGINS=*
       - CORS_MAX_AGE=86400
+      - API_KEY=local-development-key
+      # O setup-credentials.sh grava este segredo em /secrets/key.json em DEV.
+      # Não configure esta variável localmente para manter uma única fonte de segredo.
       
       # Deduplication cache (tempo em segundos, max entries)
       - DEDUP_TTL=2.0
@@ -54,6 +55,7 @@ services:
       
       # Security (deixe vazio em dev, configure em produção via GitHub Secrets)
       - ADMIN_KEY=
+
     depends_on:
       - redis
     command: python -m flask run --host=0.0.0.0 --port=8080 --reload

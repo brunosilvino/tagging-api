@@ -1,4 +1,4 @@
-.PHONY: help setup-creds validate-creds build up down logs diagram clean
+.PHONY: help setup-creds validate-creds build api redis up down logs logs-web diagram clean
 
 help:
 	@echo "Tagging API - Available Commands"
@@ -9,6 +9,8 @@ help:
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build           - Build Docker image"
+	@echo "  make api             - Rebuild and restart only the API"
+	@echo "  make redis           - Recreate Redis and RedisInsight"
 	@echo "  make up              - Start containers (requer key.json)"
 	@echo "  make down            - Stop containers"
 	@echo "  make logs            - Show container logs"
@@ -30,8 +32,16 @@ validate-creds:
 
 # === Docker ===
 build:
-	@echo "🐳 Building Docker image..."
+	@echo "🐳 Building all Docker images..."
 	docker compose build
+
+api:
+	@echo "🔄 Rebuilding and restarting only the API..."
+	docker compose up -d --build --no-deps tagging-api
+
+redis:
+	@echo "🔄 Recreating Redis and RedisInsight..."
+	docker compose up -d --force-recreate --no-deps redis redisinsight
 
 up: validate-creds
 	@echo "🚀 Starting containers..."
