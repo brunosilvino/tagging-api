@@ -28,4 +28,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Usa gunicorn em produção (mais robusto que o servidor Flask)
 CMD exec gunicorn --bind 0.0.0.0:${PORT} --workers 4 --worker-class sync --timeout 120 main:app
-CMD exec gunicorn --bind :8080 --workers 1 --threads 8 --timeout 0 main:app

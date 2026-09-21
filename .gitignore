@@ -2,6 +2,11 @@ key.json
 *key.json
 api/key.json
 
+**/node_modules/
+**/.next
+google-cloud-sdk
+frontend/out
+
 # General
 .DS_Store
 .AppleDouble

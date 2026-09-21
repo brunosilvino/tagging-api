@@ -3,6 +3,9 @@
 
 set -e
 
+: "${API_KEY:?Defina API_KEY antes do deploy}"
+: "${MEASUREMENT_PROTOCOL_API_SECRET:?Defina MEASUREMENT_PROTOCOL_API_SECRET antes do deploy}"
+
 PROJECT_ID="tagging-api-481123"
 REGISTRY="southamerica-east1-docker.pkg.dev"
 REPOSITORY="tagging-api-repo"
@@ -42,7 +45,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --memory 512Mi \
     --cpu 1 \
     --timeout 300 \
-    --set-env-vars GOOGLE_CLOUD_PROJECT=${PROJECT_ID},DEDUP_TTL=2.0,DEDUP_MAXSIZE=1000 \
+    --set-env-vars GOOGLE_CLOUD_PROJECT=${PROJECT_ID},FLASK_ENV=production,DEDUP_TTL=2.0,DEDUP_MAXSIZE=1000,API_KEY=${API_KEY},MEASUREMENT_PROTOCOL_API_SECRET=${MEASUREMENT_PROTOCOL_API_SECRET} \
     --service-account developer@${PROJECT_ID}.iam.gserviceaccount.com \
     --allow-unauthenticated
 
@@ -57,4 +60,4 @@ echo "🌐 URL: $URL"
 echo ""
 echo "Teste a API:"
 echo "  curl $URL/"
-echo "  curl -X POST $URL/loadmap -H 'Content-Type: application/json' -d '{\"map_id\":\"00001\"}'"
+echo "  curl -X POST $URL/loadmaps -H 'Content-Type: application/json' -d '[\"00001\",\"00002\"]'"
