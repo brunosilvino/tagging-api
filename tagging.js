@@ -11,6 +11,7 @@
 //      escondendo detalhes de `gtag`, validação e chamadas `fetch`.
 // =====================
 const debugMode = true
+const mapID = '00001'
 let counter = 0
 
 /**
@@ -66,6 +67,7 @@ class TaggingAPI {
             body: JSON.stringify({
                 measurement_id: this.measurement_id,
                 measurement_protocol_api_secret: this.measurement_protocol_api_secret,
+                map_id: mapID,
                 event_name, params: event_params
             })
         })

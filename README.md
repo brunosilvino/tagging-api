@@ -106,6 +106,7 @@ tagging-api/
 ├── deployment/
 │   ├── setup-credentials.sh        # Gerar key.json automaticamente
 │   ├── validate-credentials.sh     # Validar key.json
+│   ├── setup-redis.sh              # Criar Memorystore e VPC Connector
 │   ├── deploy.sh                   # Deploy manual no Cloud Run
 │   └── setup-github-actions.sh     # Configurar WIF
 ├── .github/workflows/
@@ -124,6 +125,7 @@ tagging-api/
 # Setup inicial
 make setup-creds            # Gerar key.json
 make validate-creds         # Validar credenciais
+./deployment/setup-redis.sh # Criar Redis e VPC Connector no GCP
 
 # Docker
 make build                  # Build da imagem
@@ -274,6 +276,7 @@ Carrega regras de vários mapas do BigQuery para o Redis em sequência:
 
 ```bash
 curl -X POST http://localhost:8080/loadmaps \
+  -H "Authorization: Bearer local-development-key" \
   -H "Content-Type: application/json" \
   -d '["00001", "00002"]'
 ```

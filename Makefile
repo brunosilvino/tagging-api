@@ -1,4 +1,4 @@
-.PHONY: help setup-creds validate-creds build api redis up down logs logs-web diagram clean
+.PHONY: help setup-creds validate-creds setup-redis build api redis up down logs logs-web diagram clean
 
 help:
 	@echo "Tagging API - Available Commands"
@@ -6,6 +6,7 @@ help:
 	@echo "Credenciais:"
 	@echo "  make setup-creds      - Gerar/atualizar key.json com gcloud"
 	@echo "  make validate-creds   - Validar credenciais existentes"
+	@echo "  make setup-redis      - Criar Memorystore e VPC Connector"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build           - Build Docker image"
@@ -29,6 +30,10 @@ validate-creds:
 	@echo "🔍 Validando credenciais..."
 	@chmod +x deployment/validate-credentials.sh
 	@./deployment/validate-credentials.sh
+
+setup-redis:
+	@chmod +x deployment/setup-redis.sh
+	@./deployment/setup-redis.sh
 
 # === Docker ===
 build:

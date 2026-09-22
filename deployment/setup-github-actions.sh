@@ -41,6 +41,14 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SERVICE_ACCOUNT}" \
     --role="roles/iam.serviceAccountUser"
 
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/redis.viewer"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/vpcaccess.user"
+
 # 4. Criar Workload Identity Pool e Provider
 echo "🌐 Criando Workload Identity Pool..."
 gcloud iam workload-identity-pools create ${WIF_POOL_ID} \

@@ -13,6 +13,8 @@ env:
   IMAGE_NAME: tagging-api
   REGION: southamerica-east1
   SERVICE_NAME: tagging-api
+  REDIS_INSTANCE: tagging-redis
+  VPC_CONNECTOR: tagging-api-connector
 
 jobs:
   build-and-deploy:
@@ -55,6 +57,15 @@ jobs:
           docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
 
+      - name: Resolve Memorystore host
+        run: |
+          REDIS_HOST=$(gcloud redis instances describe "${{ env.REDIS_INSTANCE }}" \
+            --project "${{ env.PROJECT_ID }}" \
+            --region "${{ env.REGION }}" \
+            --format='value(host)')
+          test -n "$REDIS_HOST"
+          echo "REDIS_HOST=$REDIS_HOST" >> "$GITHUB_ENV"
+
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy ${{ env.SERVICE_NAME }} \
@@ -64,7 +75,9 @@ jobs:
             --memory 512Mi \
             --cpu 1 \
             --timeout 300 \
-            --set-env-vars GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},FLASK_ENV=production,DEDUP_TTL=2.0,DEDUP_MAXSIZE=1000,ADMIN_KEY=${{ secrets.ADMIN_KEY }},MEASUREMENT_PROTOCOL_API_SECRET=${{ secrets.MEASUREMENT_PROTOCOL_API_SECRET }} \
+            --vpc-connector=${{ env.VPC_CONNECTOR }} \
+            --vpc-egress=private-ranges-only \
+            --set-env-vars GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},FLASK_ENV=production,DEDUP_TTL=2.0,DEDUP_MAXSIZE=1000,REDIS_HOST=$REDIS_HOST,REDIS_PORT=6379,REDIS_DB=0,ADMIN_KEY=${{ secrets.ADMIN_KEY }},MEASUREMENT_PROTOCOL_API_SECRET=${{ secrets.MEASUREMENT_PROTOCOL_API_SECRET }} \
             --service-account developer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
             --allow-unauthenticated
 

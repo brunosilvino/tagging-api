@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import hashlib
+import time
 import requests
 import re
 from urllib.parse import quote_plus
@@ -37,11 +38,24 @@ CORS(app, resources={
         "origins": allowed_origins,
         "methods": ["GET", "POST", "OPTIONS", "DELETE"],
         "allow_headers": ["Content-Type", "Authorization", "X-CLIENT-ID", "X-ADMIN-KEY"],
+        "expose_headers": ["X-Response-Time"],
         "max_age": 86400  # Cache preflight por 24 horas
     }
 })
 
 logger.info(f"CORS configurado para {FLASK_ENV}: origins={allowed_origins}")
+
+@app.before_request
+def start_response_timer():
+    request.response_start_time = time.perf_counter()
+
+@app.after_request
+def add_response_time_header(response):
+    start_time = getattr(request, "response_start_time", None)
+    if start_time is not None:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        response.headers["X-Response-Time"] = f"{elapsed_ms:.2f}ms"
+    return response
 
 # Configuração do Swagger
 app.config['SWAGGER'] = {
@@ -215,7 +229,10 @@ def require_api_key():
 
 @app.before_request #registra uma função que o Flask executa antes de qualquer endpoint.
 def authenticate_api_request():
-    """Exige autenticação Bearer em todos os endpoints da API, exceto health/docs."""
+    """Exige autenticação Bearer nos endpoints protegidos em produção."""
+    if FLASK_ENV != "production":
+        return None
+
     public_paths = {"/", "/apidocs", "/apidocs/", "/apispec_1.json"}
     if (
         request.method == "OPTIONS"
@@ -1023,13 +1040,14 @@ def get_event(event_id):
     ---
     tags: [Events]
     security: [{bearerAuth: []}]
-    parameters: [{name: event_id, in: path, required: true, type: string, example: 00002_20260105_click_home_botao}]
+    parameters: [{name: event_id, in: path, required: true, type: string, example: 00002_20260105_click_home_botao or 65831d59d8fa2329835554070e84ea9a}]
     produces: [application/json]
     responses:
       200: {description: Evento encontrado, schema: {$ref: '#/definitions/EventRule'}}
       404: {description: Evento não encontrado, schema: {$ref: '#/definitions/ErrorResponse'}}
       500: {description: Redis indisponível, schema: {$ref: '#/definitions/ErrorResponse'}}
     """
+
     if not _redis_available():
         return jsonify({"error": "Redis indisponível"}), 500
 
@@ -1120,14 +1138,99 @@ def get_events_by_parameter():
 
 
 
+def _parse_validation_request():
+    if not request.is_json:
+        return None, None, (jsonify({"error": "Content-Type deve ser application/json."}), 400)
+
+    raw_payload = request.data.decode('utf-8')
+    payload = request.get_json(silent=True)
+    format_errors = []
+
+    if payload is None:
+        format_errors.append("O corpo deve conter um JSON válido.")
+    elif not isinstance(payload, dict):
+        format_errors.append("O payload deve ser um objeto JSON.")
+    else:
+        event_name = payload.get('event_name')
+        map_id = payload.get('map_id')
+        params = payload.get('params', {})
+
+        if not isinstance(event_name, str) or not event_name.strip():
+            format_errors.append("'event_name' é obrigatório e deve ser uma string não vazia.")
+        if not isinstance(map_id, str) or not map_id.strip():
+            format_errors.append("'map_id' é obrigatório e deve ser uma string não vazia.")
+        if not isinstance(params, dict):
+            format_errors.append("'params' deve ser um objeto JSON.")
+
+    if format_errors:
+        return None, None, (jsonify({
+            "error": "Payload inválido.",
+            "details": format_errors,
+        }), 400)
+
+    return payload, raw_payload, format_errors
+
+
+VALIDATION_LAYER_NAMES = (
+    "deduplication",
+    "taxonomy",
+    "schema",
+    "google_mp",
+)
+VALIDATION_LAYERS = set(VALIDATION_LAYER_NAMES)
+
+
+def _get_requested_layers(payload):
+    layers = payload.get("layers")
+    if layers is None:
+        return list(VALIDATION_LAYER_NAMES), None
+
+    if not isinstance(layers, list) or any(not isinstance(layer, str) for layer in layers):
+        return None, "'layers' deve ser um array de strings."
+
+    if not layers:
+        return list(VALIDATION_LAYER_NAMES), None
+
+    unexpected_layers = sorted(set(layers) - VALIDATION_LAYERS)
+    if unexpected_layers:
+        return None, (
+            "Camadas inesperadas em 'layers': "
+            + ", ".join(unexpected_layers)
+            + ". Valores permitidos: "
+            + ", ".join(sorted(VALIDATION_LAYERS))
+            + "."
+        )
+
+    return layers, None
+
+
+def _build_layer_report(payload, layer_key, validation_result, invalid_statuses):
+    status = validation_result.get('status') if validation_result else "OK"
+    return {
+        "event": payload['event_name'],
+        "valid": status not in invalid_statuses,
+        "layers": {
+            layer_key: validation_result or {"status": "OK"}
+        }
+    }
+
+
+def _layer_response(payload, layer_key, validation_result, invalid_statuses):
+    report = _build_layer_report(payload, layer_key, validation_result, invalid_statuses)
+    return jsonify({
+        "summary": _format_readable_report(report),
+        "details": report,
+    }), 200
+
+
 @app.route('/validate-deduplication', methods=['POST'])
 def post_validate_deduplication():
     """Valida se o evento foi enviado com duplicação.
     ---
-    tags: [Events]
+    tags: [Validation]
     security: [{bearerAuth: []}]
     consumes: [application/json]
-    parameters: [{in: body, name: body, required: true, schema: {type: object, properties: {event_name: {type: string, example: click}, measurement_id: {type: string, example: G-NF7LZK2M10}, params: {type: object, example: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}, example: {event_name: click, measurement_id: G-NF7LZK2M10, params: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}}]
+    parameters: [{in: body, name: body, required: true, schema: {type: object, properties: {event_name: {type: string, example: click}, map_id: {type: string, example: "00001"}, measurement_id: {type: string, example: G-NF7LZK2M10}, params: {type: object, example: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}, example: {event_name: click, map_id: "00001", measurement_id: G-NF7LZK2M10, params: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}}]
     produces: [application/json]
     responses:
         200:
@@ -1144,71 +1247,123 @@ def post_validate_deduplication():
                 $ref: '#/definitions/ErrorResponse'
     """
     try:
-        if not request.is_json:
-            return jsonify({"error": "Content-Type deve ser application/json."}), 400
+        payload, raw_payload, error_response = _parse_validation_request()
+        if error_response:
+            return error_response
 
-        raw_payload = request.data.decode('utf-8')
-        payload = request.get_json(silent=True)
-        format_errors = []
-
-        if payload is None:
-            format_errors.append("O corpo deve conter um JSON válido.")
-        elif not isinstance(payload, dict):
-            format_errors.append("O payload deve ser um objeto JSON.")
-        else:
-            event_name = payload.get('event_name')
-            map_id = payload.get('map_id')
-            params = payload.get('params', {})
-
-            if not isinstance(event_name, str) or not event_name.strip():
-                format_errors.append("'event_name' é obrigatório e deve ser uma string não vazia.")
-            if not isinstance(map_id, str) or not map_id.strip():
-                format_errors.append("'map_id' é obrigatório e deve ser uma string não vazia.")
-            if not isinstance(params, dict):
-                format_errors.append("'params' deve ser um objeto JSON.")
-
-        if len(format_errors)>0:
-            return jsonify({
-                "error": "Payload inválido.",
-                "details": format_errors,
-            }), 400
-
-        event_name = payload['event_name']
-        
-        report = {
-            "event": event_name,
-            "valid": True,
-            "layers": {}
-        }
-
-        # 1. Deduplicação
-        dedup_res = validate_deduplication(raw_payload)
-        if dedup_res:
-            report["valid"] = False
-            report["layers"]["deduplication"] = dedup_res
-        else:
-            report["layers"]["deduplication"] = {"status": "OK"}
-
-        # Gerar versão legível
-        readable_report = _format_readable_report(report)
-        
-        return jsonify({
-            "summary": readable_report,
-            "details": report
-        }), 200
+        return _layer_response(
+            payload,
+            "deduplication",
+            validate_deduplication(raw_payload, payload),
+            {"ERROR"},
+        )
 
     except Exception as e:
         logger.error(f"Erro Fatal no validate_full: {e}", exc_info=True)
         return jsonify({"error": "Erro interno no servidor", "details": str(e)}), 500
 
+
+@app.route('/validate-taxonomy', methods=['POST'])
+def post_validate_taxonomy():
+    """Valida isoladamente a nomenclatura do evento e seus parâmetros.
+        ---
+        tags: [Validation]
+        security: [{bearerAuth: []}]
+        consumes: [application/json]
+        parameters: [{in: body, name: body, required: true, schema: {type: object, required: [event_name, map_id], properties: {event_name: {type: string, example: page_view}, map_id: {type: string, example: "00001"}, params: {type: object, additionalProperties: true, example: {page_path: "/home"}}}}}]
+        produces: [application/json]
+        responses:
+            200:
+                description: Relatório da validação de taxonomia
+                schema: {$ref: '#/definitions/ValidationResponse'}
+            400:
+                description: Payload JSON inválido ou fora do formato esperado
+                schema: {$ref: '#/definitions/ErrorResponse'}
+            500:
+                description: Erro interno durante a validação
+                schema: {$ref: '#/definitions/ErrorResponse'}
+        """
+    try:
+        payload, _, error_response = _parse_validation_request()
+        if error_response:
+            return error_response
+        return _layer_response(payload, "taxonomy", validate_taxonomy(payload), {"ERROR"})
+    except Exception as e:
+        logger.error("Erro ao validar taxonomia: %s", e, exc_info=True)
+        return jsonify({"error": "Erro interno no servidor", "details": str(e)}), 500
+
+
+@app.route('/validate-schema', methods=['POST'])
+def post_validate_schema():
+    """Valida isoladamente o evento contra o mapa carregado no Redis.
+        ---
+        tags: [Validation]
+        security: [{bearerAuth: []}]
+        consumes: [application/json]
+        parameters: [{in: body, name: body, required: true, schema: {type: object, required: [event_name, map_id], properties: {event_name: {type: string, example: page_view}, map_id: {type: string, example: "00001"}, map_version: {type: string, example: "1"}, event_id: {type: string, example: 00001_page_view_home}, params: {type: object, additionalProperties: true, example: {page_path: "/home"}}}}}]
+        produces: [application/json]
+        responses:
+            200:
+                description: Relatório da validação contra o schema
+                schema: {$ref: '#/definitions/ValidationResponse'}
+            400:
+                description: Payload JSON inválido ou fora do formato esperado
+                schema: {$ref: '#/definitions/ErrorResponse'}
+            500:
+                description: Erro interno durante a validação
+                schema: {$ref: '#/definitions/ErrorResponse'}
+        """
+    try:
+        payload, _, error_response = _parse_validation_request()
+        if error_response:
+            return error_response
+        return _layer_response(payload, "schema", validate_schema(payload), {"ERROR", "WARNING"})
+    except Exception as e:
+        logger.error("Erro ao validar schema: %s", e, exc_info=True)
+        return jsonify({"error": "Erro interno no servidor", "details": str(e)}), 500
+
+
+@app.route('/validate-google-mp', methods=['POST'])
+def post_validate_google_mp():
+    """Valida isoladamente o evento contra o Google Measurement Protocol.
+        ---
+        tags: [Validation]
+        security: [{bearerAuth: []}]
+        consumes: [application/json]
+        parameters: [{in: body, name: body, required: true, schema: {type: object, required: [event_name, map_id, measurement_id, measurement_protocol_api_secret, client_id], properties: {event_name: {type: string, example: page_view}, map_id: {type: string, example: "00001"}, measurement_id: {type: string, example: G-NF7LZK2M10}, measurement_protocol_api_secret: {type: string, example: secret}, params: {type: object, additionalProperties: true, example: {page_location: "https://example.com/home", client_id: "123456789.123456789"}}}}}]
+        produces: [application/json]
+        responses:
+            200:
+                description: Relatório da validação no Google Measurement Protocol
+                schema: {$ref: '#/definitions/ValidationResponse'}
+            400:
+                description: Payload JSON inválido ou fora do formato esperado
+                schema: {$ref: '#/definitions/ErrorResponse'}
+            500:
+                description: Erro interno durante a validação
+                schema: {$ref: '#/definitions/ErrorResponse'}
+        """
+    try:
+        payload, _, error_response = _parse_validation_request()
+        if error_response:
+            return error_response
+        return _layer_response(payload, "google_mp", validate_google_mp(payload), {"ERROR"})
+    except Exception as e:
+        logger.error("Erro ao validar Google Measurement Protocol: %s", e, exc_info=True)
+        return jsonify({"error": "Erro interno no servidor", "details": str(e)}), 500
+
 @app.route('/validate', methods=['POST'])
 def validate():
     """Valida um evento em 4 camadas: deduplicação, taxonomia, schema e Google MP.
+
+    Utilize o parâmetro `layers` com os valores `deduplication`, `taxonomy`,
+    `schema` e `google_mp` para habilitar uma ou mais camadas de validação.
+    Se `layers` não for definido ou for vazio, o endpoint validará todas as camadas.
     ---
-    tags: [Events]
+    tags: [Validation]
     security: [{bearerAuth: []}]
     consumes: [application/json]
-    parameters: [{in: body, name: body, required: true, schema: {type: object, properties: {event_name: {type: string, example: click}, measurement_id: {type: string, example: G-NF7LZK2M10}, params: {type: object, example: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}, example: {event_name: click, measurement_id: G-NF7LZK2M10, params: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}}]
+    parameters: [{in: body, name: body, required: true, schema: {type: object, properties: {event_name: {type: string, example: click}, map_id: {type: string, example: "00001"}, layers: {type: array, items: {type: string, enum: [deduplication, taxonomy, schema, google_mp]}, example: [taxonomy, schema]}, measurement_id: {type: string, example: G-NF7LZK2M10}, params: {type: object, example: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}, example: {event_name: click, map_id: "00001", layers: [taxonomy, schema], measurement_id: G-NF7LZK2M10, params: {page_path: "/", title: "Página inicial", section: header, component: botao, label: "botao:explorar"}}}}]
     produces: [application/json]
     responses:
         200:
@@ -1225,84 +1380,49 @@ def validate():
                 $ref: '#/definitions/ErrorResponse'
     """
     try:
-        if not request.is_json:
-            return jsonify({"error": "Content-Type deve ser application/json."}), 400
+        payload, raw_payload, error_response = _parse_validation_request()
+        if error_response:
+            return error_response
 
-        raw_payload = request.data.decode('utf-8')
-        payload = request.get_json(silent=True)
-        format_errors = []
-
-        if payload is None:
-            format_errors.append("O corpo deve conter um JSON válido.")
-        elif not isinstance(payload, dict):
-            format_errors.append("O payload deve ser um objeto JSON.")
-        else:
-            event_name = payload.get('event_name')
-            map_id = payload.get('map_id')
-            params = payload.get('params', {})
-
-            if not isinstance(event_name, str) or not event_name.strip():
-                format_errors.append("'event_name' é obrigatório e deve ser uma string não vazia.")
-            if not isinstance(map_id, str) or not map_id.strip():
-                format_errors.append("'map_id' é obrigatório e deve ser uma string não vazia.")
-            if not isinstance(params, dict):
-                format_errors.append("'params' deve ser um objeto JSON.")
-
-        if len(format_errors)>0:
+        requested_layers, layers_error = _get_requested_layers(payload)
+        if layers_error:
             return jsonify({
-                "error": "Payload inválido.",
-                "details": format_errors,
+                "error": "Parâmetro 'layers' inválido.",
+                "details": [layers_error],
             }), 400
 
-        event_name = payload['event_name']
-        
-        report = {
-            "event": event_name,
-            "valid": True,
-            "layers": {}
+        layer_validators = {
+            "deduplication": lambda: validate_deduplication(raw_payload, payload),
+            "taxonomy": lambda: validate_taxonomy(payload),
+            "schema": lambda: validate_schema(payload),
+            "google_mp": lambda: validate_google_mp(payload),
+        }
+        layer_results = {
+            layer_key: layer_validators[layer_key]()
+            for layer_key in requested_layers
+        }
+        invalid_statuses = {
+            "deduplication": {"ERROR"},
+            "taxonomy": {"ERROR"},
+            "schema": {"ERROR", "WARNING"},
+            "google_mp": {"ERROR"},
         }
 
-        # 1. Deduplicação
-        dedup_res = validate_deduplication(raw_payload)
-        if dedup_res:
-            report["valid"] = False
-            report["layers"]["deduplication"] = dedup_res
-        else:
-            report["layers"]["deduplication"] = {"status": "OK"}
+        report = {
+            "event": payload['event_name'],
+            "valid": all(
+                (result or {}).get("status", "OK") not in invalid_statuses[layer_key]
+                for layer_key, result in layer_results.items()
+            ),
+            "layers": {
+                layer_key: result or {"status": "OK"}
+                for layer_key, result in layer_results.items()
+            },
+        }
 
-        # 2. Taxonomia
-        tax_res = validate_taxonomy(payload)
-        if tax_res:
-            report["valid"] = False
-            report["layers"]["taxonomy"] = tax_res
-        else:
-            report["layers"]["taxonomy"] = {"status": "OK"}
-
-        # 3. Schema (Redis)
-        schema_res = validate_schema(payload)
-        if schema_res and schema_res.get('status') in ["ERROR","WARNING"]:
-            report["valid"] = False
-            report["layers"]["schema"] = schema_res
-        elif schema_res: # Warning or Skipped
-             report["layers"]["schema"] = schema_res
-        else:
-            report["layers"]["schema"] = {"status": "OK"}
-
-        # 4. Google MP
-        mp_res = validate_google_mp(payload)
-        if mp_res:
-            if mp_res['status'] == "ERROR":
-                report["valid"] = False
-            report["layers"]["google_mp"] = mp_res
-        else:
-            report["layers"]["google_mp"] = {"status": "OK"}
-
-        # Gerar versão legível
-        readable_report = _format_readable_report(report)
-        
         return jsonify({
-            "summary": readable_report,
-            "details": report
+            "summary": _format_readable_report(report),
+            "details": report,
         }), 200
 
     except Exception as e:
