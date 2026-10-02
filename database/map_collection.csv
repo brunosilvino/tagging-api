@@ -1,0 +1,22 @@
+map_version,map_id,event_name,page_path,title,section,component,label,outbound,event_id
+20260105,00001,page_view,/,Martech Cachorro,,,,,65831d59d8fa2329835554070e84ea9a
+20260105,00001,click,/,,header,link,link:cachorro,0,16dbf2e33e47efb78a36bf379d9f1f2a
+20260105,00001,click,/,,header,link,link:gato,1,855b0b239829e288e5d4aaad9e324e05
+20260105,00001,click,/,,header,botao,botao:seta-baixo,,070563e98030fc7c92af7661328a2355
+20260105,00001,field_fill,/,,form:contrate-um-servico,input-text,nome,,a149aaec1caebed9e1f6fbb7ae9e516d
+20260105,00001,field_fill,/,,form:contrate-um-servico,input-text,email,,05f81f561163222f6650c26a3b851551
+20260105,00001,field_fill,/,,form:contrate-um-servico,textarea,mensagem,,2573cc94951e6660d30d165186edc425
+20260105,00001,field_select,/,,form:contrate-um-servico,select,assunto:{{assunto}},,c04ee8fd227951e306fec1f1a3222c69
+20260105,00001,form_submit,/,,form:contrate-um-servico,form,send-message,,92afb4a96fb08567948233c1be85aa73
+20260105,00001,component_view,/,,gallery,banner,banner:cachorro,,322475f475038331b1e85d8c1b616903
+20260105,00001,click,%,,header,botao,botao:seta-{{direcao}},,b98ea36ec2a202aa329954169de30722
+20260914,00002,click,/,,section,button,explorar-colecao,,72da95d11d7ccdfafa2ebe8c70b4b729
+20260914,00002,click,/pagina2,,example,button,testar-botao,,10a4518d17a45070f4bc2b02ca764a80
+20261001,00003,page_view,/,TaggingAPI Demo,,,,,65f9c171fcee743f1dec1fecb8d98b97
+20261001,00003,click,/,,sectionClicks,button,sample-button,,cf49b7c290e47cc54581614af3f3b3cf
+20261001,00003,click,/,,sectionClicks,link,sample-external-link,,88118fcec679625c837f4bafbb7ac2cc
+20261001,00003,field_fill,/,,sectionForm,input-text,nome,,a7a3503f28653cb87977033d82c5c303
+20261001,00003,field_fill,/,,sectionForm,select,assunto:{{opcao selecionada}},,5bfcea714169f71d080af35c87f99c6b
+20261001,00003,field_fill,/,,sectionForm,input-email,e-mail,,c07e37125c64c4fb7cb62824d3f4e3bf
+20261001,00003,field_fill,/,,sectionForm,textarea,mensagem,,44800522812df3201002143314103821
+20261001,00003,form_submit,/,,sectionForm,form,sample-form,,9c2c38030ad6276dc99c5be0592a0832

@@ -1,101 +1,14 @@
-name: Deploy to Cloud Run
+name: Deploy to Render
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Permite disparo manual
-
-env:
-  REGISTRY: southamerica-east1-docker.pkg.dev
-  PROJECT_ID: tagging-api-481123
-  REPOSITORY: tagging-api-repo
-  IMAGE_NAME: tagging-api
-  REGION: southamerica-east1
-  SERVICE_NAME: tagging-api
-  REDIS_INSTANCE: tagging-redis
-  VPC_CONNECTOR: tagging-api-connector
+  workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-
-    outputs:
-      cloud_run_url: ${{ steps.get-url.outputs.cloud_run_url }}
-    
-    permissions:
-      contents: read
-      id-token: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          token_format: 'access_token'
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
-
-      - name: Configure Docker to use gcloud
-        run: |
-          gcloud auth configure-docker ${{ env.REGISTRY }}
-
-      - name: Build Docker image
-        run: |
-          docker build \
-            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest \
-            ./api
-
-      - name: Push image to Artifact Registry
-        run: |
-          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
-
-      - name: Resolve Memorystore host
-        run: |
-          REDIS_HOST=$(gcloud redis instances describe "${{ env.REDIS_INSTANCE }}" \
-            --project "${{ env.PROJECT_ID }}" \
-            --region "${{ env.REGION }}" \
-            --format='value(host)')
-          test -n "$REDIS_HOST"
-          echo "REDIS_HOST=$REDIS_HOST" >> "$GITHUB_ENV"
-
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy ${{ env.SERVICE_NAME }} \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --region ${{ env.REGION }} \
-            --platform managed \
-            --memory 512Mi \
-            --cpu 1 \
-            --timeout 300 \
-            --vpc-connector=${{ env.VPC_CONNECTOR }} \
-            --vpc-egress=private-ranges-only \
-            --set-env-vars GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},FLASK_ENV=production,DEDUP_TTL=2.0,DEDUP_MAXSIZE=1000,REDIS_HOST=$REDIS_HOST,REDIS_PORT=6379,REDIS_DB=0,ADMIN_KEY=${{ secrets.ADMIN_KEY }},MEASUREMENT_PROTOCOL_API_SECRET=${{ secrets.MEASUREMENT_PROTOCOL_API_SECRET }} \
-            --service-account developer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --allow-unauthenticated
-
-      - name: Get Cloud Run URL
-        id: get-url
-        run: |
-          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
-            --region ${{ env.REGION }} \
-            --format='value(status.url)')
-          echo "✅ Deploy concluído!"
-          echo "URL: $URL"
-          echo "CLOUD_RUN_URL=$URL" >> $GITHUB_ENV
-          echo "cloud_run_url=$URL" >> "$GITHUB_OUTPUT"
-
-      - name: Post deployment summary
-        run: |
-          echo "## 🚀 Deploy Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image**: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region**: ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+      - name: Trigger Render deploy
+        run: curl --fail --silent --show-error -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"

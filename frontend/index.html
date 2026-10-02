@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  	<!-- Google tag (gtag.js) -->
+	<script async src="https://www.googletagmanager.com/gtag/js?id=G-GX41BSHS2R"></script>
+	<script>
+		const env = location.hostname.includes('localhost') ? 'dev' : 'prd'
+		window.dataLayer = window.dataLayer || [];
+		function gtag() { dataLayer.push(arguments); }
+		gtag('js', new Date());
+		gtag('config', 'G-GX41BSHS2R', { 
+			'cookie_flags': 'SameSite=None;Secure', 
+			'cookie_domain':  (env === 'dev') ? 'localhost' : 'brunosilvino.github.io',
+			'debug_mode': true
+		});
+	</script>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>TaggingAPI Demo</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<main>
+		<div class="shell">
+			<div class="content">
+        <header>
+			<div class="eyebrow">Tagging API · mapa 00003</div>
+			<h1>TaggingAPI Demo</h1>
+			<p>Página para testar eventos.</p>
+		</header>
+			<div class="grid">
+
+        <section id="sectionFields">
+          <h2>Visualização de página</h2>
+          <table class="payload-table">
+            <caption>Este evento será enviado automaticamente ao carregar a página:</caption>
+            <thead>
+              <tr>
+                <th scope="col">Campo</th>
+                <th scope="col">Valor</th>
+              </tr>
+            </thead>
+            <tbody id="tracker-payload-body"></tbody>
+          </table>
+        </section>
+        
+        <section id="sectionClicks">
+          <h2>Interações</h2>
+          <p class="muted">Teste eventos de clique em botão e link.</p>
+          <button event-id="cf49b7c290e47cc54581614af3f3b3cf" id="cta-button" type="button">Sample button</button>
+          <a event-id="88118fcec679625c837f4bafbb7ac2cc" class="link" href="https://example.com" target="_blank" rel="noreferrer">Sample external link</a>
+        </section>
+
+        
+
+        <section id="sectionForm" class="wide">
+          <h2>Formulário</h2>
+          <form event-id="9c2c38030ad6276dc99c5be0592a0832" id="sample-form">
+            <label for="name">Nome
+            <input event-id="95944daec3e65258411a84fae075306f" id="nome" name="nome" type="text" placeholder="Seu nome" onchange="window.trackingObg.map_id=this.value">
+          </label>
+          <label for="topic">Assunto
+            <select event-id="1c2edf436a820c01a59d3adeb9f7a6b6" id="assunto" name="assunto">
+              <option value="duvida">Dúvida</option>
+              <option value="orcamento">Orçamento</option>
+              <option value="suporte">Suporte</option>
+            </select>
+          </label>
+            <label for="email">E-mail
+              <input event-id="c07e37125c64c4fb7cb62824d3f4e3bf" id="email" name="email" type="email" placeholder="voce@exemplo.com" required>
+            </label>
+            <label for="message">Mensagem
+              <textarea event-id="44800522812df3201002143314103821" id="message" name="mensagem" placeholder="Como podemos ajudar?"></textarea>
+            </label>
+            <button type="submit">Enviar mensagem</button>
+            <p class="muted" data-form-status></p>
+          </form>
+        </section>
+
+      			
+			</div>
+		</div>
+
+      <aside aria-live="polite">
+				<h2>Última validação</h2>
+
+	
+				<strong>Payload enviado</strong>
+        <div class="status" id="validation-status">Aguardando evento...</div>
+				<pre id="validation-payload">Nenhum evento enviado.</pre>
+				<strong>Resposta da API</strong>
+				<pre id="validation-response">Nenhuma resposta recebida.</pre>
+        <strong>Resposta da API formatada</strong>
+				<pre id="validation-response-formatted">Nenhuma resposta recebida.</pre>
+			</aside>
+      
+    </div>
+
+
+	</main>
+  <script src="tagging.js"></script>
+
+</body>
+</html>

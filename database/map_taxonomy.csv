@@ -1,0 +1,10 @@
+param_name,data_type,required,pattern,description,pattern_error
+map_id,STRING,TRUE,\d+,Id do mapa,'map_id' deve ser uma string não vazia.
+map_version,NUMERIC,FALSE,\d+,Versão da integração do mapa,'map_version' deve ser uma string não vazia.
+event_name,STRING,TRUE,(page_view|click|field_fill|field_select|form_submit|component_view|purchase),Nome do evento,"'event_name' deve conter um desses valores: page_view, click, field_fill, field_select, form_submit, component_view, purchase"
+page_path,STRING,FALSE,"^\/[a-zA-Z0-9:\-\_\/]{0,99}$",Caminho da página,"'page_path' deve ser uma string de 1 a 99 caracteres iniciada por ""/"" especificando o caminho da página"
+title,STRING,FALSE,"^.{1,100}$",Título da página,'title' deve ser uma string de 1 a 99 caracteres especificando o título da página
+section,STRING,FALSE,"^[a-zA-Z0-9:\-\_]{1,100}$",Seção da página,'section' deve ser uma string sem espaços nem caracteres especiais de 1 a 99 caracteres 
+label,STRING,FALSE,"^[a-zA-Z0-9:\-\_]{1,100}$",Rótulo do evento,'label' deve ser uma string sem espaços nem caracteres especiais de 1 a 99 caracteres 
+outbound,BOOLEAN,FALSE,(true|false),Clique de saída,'outbound' deve ser um parâmetro booleano
+component,STRING,FALSE,(link|button|card|input-text|input-email|input-password|input-radio|input-checkbox|input-range|textarea|select|banner|accordion|form),Nome do componente,"'component' deve conter um desses valores: link, button, card, input-text, input-email, input-password, input-radio, input-checkbox, input-range, textarea, select, banner, accordion, form"

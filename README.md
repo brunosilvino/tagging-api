@@ -1,542 +1,114 @@
 # Tagging Validation API
 
-![Status](https://img.shields.io/badge/status-development-yellow)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![Docker](https://img.shields.io/badge/docker-ready-brightgreen)
+API Flask para validar eventos de Analytics usando PostgreSQL como banco único. A tabela `map_collection` é particionada por hash de `map_id` e armazena os parâmetros em `JSONB`. A tabela `map_taxonomy` define as regras usadas pela validação de taxonomia.
 
-API Flask para validação de eventos de Analytics com suporte a BigQuery, Redis, deduplicação por sessão e integração com Google Analytics 4 (GA4).
+## Desenvolvimento local
 
-## 📋 Índice
+Pré-requisitos: Docker e Docker Compose.
 
-- [Quick Start](#-quick-start)
-- [Arquitetura](#-arquitetura)
-- [Desenvolvimento Local](#-desenvolvimento-local)
-- [Deploy em Produção](#-deploy-em-produção)
-- [Referência de Endpoints](#-referência-de-endpoints)
-- [Segurança](#-segurança)
-- [Troubleshooting](#-troubleshooting)
+### Comandos Make
 
----
+O `Makefile` define os comandos abaixo. Execute-os a partir da raiz do projeto:
 
-## 🚀 Quick Start
+| Comando | Descrição |
+| --- | --- |
+| `make` ou `make help` | Exibe a lista de comandos disponíveis. É o comando padrão. |
+| `make build` | Constrói todas as imagens Docker sem iniciar os serviços. |
+| `make api` | Reconstrói a imagem e reinicia somente o serviço da API, sem recriar as dependências. |
+| `make db` | Recria o volume do PostgreSQL, executa novamente os scripts de inicialização e recarrega os CSVs. Os dados atuais do banco são apagados. |
+| `make pgadmin` | Inicia o pgAdmin e o disponibiliza em `http://localhost:5050`. |
+| `make up` | Inicia todos os serviços definidos no Docker Compose. A API fica disponível em `http://localhost:8080`. |
+| `make down` | Para e remove os containers e volumes da stack local, apagando os dados persistidos do PostgreSQL e do pgAdmin. |
+| `make logs` | Exibe e acompanha continuamente os logs do serviço da API. Use `Ctrl+C` para sair. |
+| `make query` | Abre um terminal PostgreSQL interativo no container. |
+| `make diagram` | Gera o diagrama de arquitetura usando o container da API. |
+| `make clean` | Remove diagramas e arquivos gerados (`.png`, `.html`, `.dot`, `.svg` e `diagrams_output/`). |
 
-### Pré-requisitos
-
-- **Docker & Docker Compose**: [Instalar](https://docs.docker.com/get-docker/)
-- **gcloud CLI**: [Instalar](https://cloud.google.com/sdk/docs/install)
-- **Autenticação GCP**: `gcloud auth login`
-
-### Desenvolvimento Local (3 passos)
+Para executar uma consulta única sem abrir o prompt interativo, passe a SQL pela
+variável `QUERY`:
 
 ```bash
-# 1️⃣ Clonar repositório
-git clone https://github.com/brunosilvino/tagging-api.git
-cd tagging-api
-
-# 2️⃣ Gerar credenciais (key.json) automaticamente
-make setup-creds
-# Ou manualmente: ./deployment/setup-credentials.sh
-
-# 3️⃣ Iniciar containers
-make up
-# Ou manualmente: docker compose up -d
+make query QUERY="SELECT count(*) FROM map_collection;"
+make query QUERY="SELECT * FROM map_taxonomy ORDER BY param_name;"
 ```
 
-**Pronto!** A API está em `http://localhost:8080`
-
 ```bash
-# Health check
+make up
 curl http://localhost:8080/
-
-# Swagger UI
 open http://localhost:8080/apidocs
 ```
----
 
-## 🏗️ Arquitetura
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                     Clients                                  │
-│              (Web, tagging.js, GA4)                          │
-└────────────────────┬─────────────────────────────────────────┘
-                     │
-┌────────────────────▼───────────────────────────────────────┐
-│                  Flask API (:8080)                         │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  4-Layer Validation:                                 │  │
-│  │  1. Deduplication  (TTL Cache, 2s default)           │  │
-│  │  2. Taxonomy       (snake_case, reserved names)      │  │
-│  │  3. Schema         (Redis rules cache)               │  │ 
-│  │  4. Google MP      (GA4 Debug Protocol)              │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────┬────────────────────────────┬────────────────────-┘
-          │                            │
-    ┌─────▼──────┐            ┌────────▼────────┐
-    │   Redis    │            │    BigQuery     │
-    │  (rules)   │            │   (analytics)   │
-    └────────────┘            └─────────────────┘
-```
-
-### Componentes
-
-| Componente | Descrição |
-|-----------|-----------|
-| **Flask API** | Servidor HTTP em Python |
-| **Deduplication** | Cache TTL para evitar eventos duplicados |
-| **Taxonomy Validation** | Verifica padrões de nomenclatura |
-| **Redis** | Armazena regras de validação em cache |
-| **BigQuery** | Carrega dados analíticos |
-| **Docker** | Containerização (Python 3.10-slim + Gunicorn) |
-
----
-
-## 🔧 Desenvolvimento Local
-
-### Estrutura de pastas
-
-```
-tagging-api/
-├── api/
-│   ├── main.py                     # Aplicação Flask principal
-│   ├── config.py                   # Configuração central (versão, etc)
-│   ├── requirements.txt            # Dependências Python
-│   ├── Dockerfile                  # Imagem Docker (produção)
-│   └── .dockerignore               # Arquivos excluídos do build
-├── deployment/
-│   ├── setup-credentials.sh        # Gerar key.json automaticamente
-│   ├── validate-credentials.sh     # Validar key.json
-│   ├── setup-redis.sh              # Criar Memorystore e VPC Connector
-│   ├── deploy.sh                   # Deploy manual no Cloud Run
-│   └── setup-github-actions.sh     # Configurar WIF
-├── .github/workflows/
-│   └── deploy.yml                  # CI/CD pipeline
-├── docker-compose.yml              # Composição local (development)
-├── Makefile                        # Comandos úteis
-├── .gitignore                      # Excluir do repositório
-├── .dockerignore                   # Excluir do Docker
-├── key.json                        # ⚠️ Credenciais (NUNCA comitar)
-└── README.md                       # Este arquivo
-```
-
-### Comandos Úteis
+A stack local sobe PostgreSQL em `localhost:5432` e a API em `localhost:8080`. O schema é criado automaticamente. Para parar os serviços:
 
 ```bash
-# Setup inicial
-make setup-creds            # Gerar key.json
-make validate-creds         # Validar credenciais
-./deployment/setup-redis.sh # Criar Redis e VPC Connector no GCP
-
-# Docker
-make build                  # Build da imagem
-make api                    # Rebuild e reiniciar somente o tagging-api
-make redis                  # Recriar os containers redis e redisinsight
-make up                     # Iniciar containers
-make down                   # Parar containers
-make logs                   # Ver logs
-
-# Equivalente sem Makefile
-docker compose up -d --build --no-deps tagging-api
-docker compose up -d --force-recreate --no-deps redis redisinsight
-
-# RedisInsight
-open http://localhost:5540   # Interface visual do Redis local
-
-# Diagrama de arquitetura
-make diagram                # Gerar PNG da arquitetura
-make clean                  # Limpar arquivos gerados
-
-# Ajuda
-make help                   # Listar todos os comandos
+make down
 ```
 
-### Configuração de Desenvolvimento
+O pgAdmin fica disponível em `http://localhost:5050` para visualizar e consultar
+os dados. Login do pgAdmin: `admin@tagging.dev` / `tagging`. Ao criar o
+servidor, use `postgres` como host, banco `tagging`, usuário `tagging` e senha
+`tagging`.
 
-**docker-compose.yml** - variáveis de ambiente:
+O servidor `Tagging PostgreSQL` já é importado automaticamente a partir de
+`pgadmin/servers.json` e aparece conectado no grupo `Tagging API`.
 
-| Variável | Padrão | Descrição |
-|----------|--------|-----------|
-| `DEDUP_TTL` | `2.0` | Janela de deduplicação (segundos) |
-| `DEDUP_MAXSIZE` | `1000` | Tamanho máximo do cache |
-| `ADMIN_KEY` | vazio | Chave para proteger `/clear-cache` |
-| `FLASK_ENV` | `development` | environment (development/production) |
-| `CORS_ORIGINS` | `*` | Origens CORS permitidas (separadas por vírgula em produção) |
-| `REDIS_HOST` | `redis` | Host do Redis local |
-| `REDIS_PORT` | `6379` | Porta do Redis |
-| `REDIS_DB` | `0` | Base Redis |
-| `REDIS_PREFIX` | `tagging-api` | Prefixo dos keys |
+A pasta `database/` é a fonte da base local:
 
-O `make setup-creds` solicita o `measurement_protocol_api_secret` sem exibi-lo e
-grava o valor no `key.json`, que é ignorado pelo Git e montado somente no ambiente
-local. O cliente não deve enviar esse segredo no payload.
+- `001_schema.sql`: as tabelas, partições e índices.
+- `002_seed.sql`: registros demonstrativos.
+- `003_import_map_collection.sql`: importa `map_collection.csv` para `map_collection`.
+- `004_import_map_taxonomy.sql`: importa `map_taxonomy.csv`.
 
-### RedisInsight
+Os scripts de inicialização do PostgreSQL só rodam quando o volume é criado.
+Para recriar a base local a partir desses arquivos, use `docker compose down -v`
+e depois `make up`.
 
-Se o `docker-compose.yml` estiver rodando, a interface visual do Redis fica em:
+Variáveis principais: `DATABASE_URL`, `API_KEY`, `ADMIN_KEY`, `CORS_ORIGINS` e `DEDUP_TTL`.
 
-```bash
-http://localhost:5540
-```
+## Importação de mapas
 
-O RedisInsight se conecta ao serviço `redis` da stack local e permite inspecionar chaves, valores, TTLs e estruturas como sets e hashes.
+`POST /loadmaps` grava mapas diretamente no PostgreSQL. O corpo deve conter os eventos, pois não existe mais uma fonte BigQuery ou cache Redis:
 
-Para mudar:
-
-```yaml
-# docker-compose.yml
-environment:
-  - DEDUP_TTL=5.0           # Aumentar janela
-  - ADMIN_KEY=seu-secret    # Proteger endpoints
-  - CORS_ORIGINS=*          # Desenvolvimento: todas as origens
-  # Produção: CORS_ORIGINS=https://seu-dominio.com,https://app.seu-dominio.com
-```
-
-### Configuração de CORS
-
-**Desenvolvimento (padrão):**
-```bash
-CORS_ORIGINS=*  # Permitir todas as origens
-```
-
-**Produção (restringido):**
-```bash
-# Separar múltiplos domínios por vírgula
-CORS_ORIGINS=https://seu-dominio.com,https://app.seu-dominio.com,https://api.seu-dominio.com
-```
-
-Quando `FLASK_ENV=production` e `CORS_ORIGINS` é configurado, o sistema:
-- ✅ Cache preflight por 24 horas (reduz requisições OPTIONS)
-- ✅ Apenas domínios específicos podem acessar a API
-- ✅ Melhor performance e segurança
-
-### Versionamento
-
-A versão é centralizada em `api/config.py`:
-
-```python
-__version__ = "0.0.1"
-```
-
-**Convenção semântica:**
-- `0.0.x` - Desenvolvimento (instável)
-- `0.x.0` - Features em preview
-- `1.0.0` - Primeira versão estável
-- `1.x.0` - Features compatíveis
-- `x.0.0` - Breaking changes
-
----
-
-## 📡 Referência de Endpoints
-
-### Health Check
-
-```bash
-curl http://localhost:8080/
-```
-
-**Resposta:**
 ```json
-{
-  "status": "ONLINE",
-  "version": "0.0.1",
-  "app": "Tagging Validation API",
-  "docs": "/apidocs"
-}
+[
+  {
+    "map_id": "00001",
+    "map_version": "20260105",
+    "events": [
+      {
+        "event_id": "evt-home-click",
+        "event_name": "click",
+        "params": {"page_path": "/", "component": "button"}
+      }
+    ]
+  }
+]
 ```
 
-### Validação (POST /validate)
+Os endpoints principais permanecem disponíveis: `GET /`, `GET /map`, `GET /event/<event_id>`, `GET /events`, `DELETE /events`, `POST /validate` e as validações individuais.
 
-Valida eventos com 4 camadas:
+## Deploy no Render
 
-```bash
-curl -X POST http://localhost:8080/validate \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer local-development-key" \
-  -d '{
-    "event_name": "select_content",
-    "params": {
-      "content_type": "article",
-      "item_id": "12345"
-    },
-    "measurement_id": "G-NF7LZK2M10",
-  }'
-```
+O arquivo `render.yaml` define três recursos:
 
-O endpoint exige a chave da API no header `Authorization` como `Bearer`. Configure o mesmo valor em `API_KEY` no backend. Não envie a chave de autenticação dentro do JSON.
+- Web Service Docker para a API.
+- PostgreSQL gerenciado.
+- Static Site para `frontend/`.
 
-**Camadas de Validação:**
-1. **Deduplication** - Evento duplicado em curto intervalo?
-2. **Taxonomy** - Respeita convenções (snake_case)?
-3. **Schema** - Atende regras do Firestore?
-4. **Google MP** - Envia para GA4 Debug Protocol?
+Configure `API_KEY`, `ADMIN_KEY` e `CORS_ORIGINS` como variáveis secretas ou de ambiente no Render. O banco é injetado na API por `DATABASE_URL`. Não são necessários GCP, Redis, VPC, `key.json` ou service accounts.
 
-### Carregar Mapas (POST /loadmaps)
+Para deploy automático via GitHub Actions, crie o secret `RENDER_DEPLOY_HOOK` com o Deploy Hook do Web Service. O workflow dispara esse hook em pushes para `main`.
 
-Carrega regras de vários mapas do BigQuery para o Redis em sequência:
-
-```bash
-curl -X POST http://localhost:8080/loadmaps \
-  -H "Authorization: Bearer local-development-key" \
-  -H "Content-Type: application/json" \
-  -d '["00001", "00002"]'
-```
-
-A resposta informa o resultado individual de cada mapa. Em caso de falha parcial, o endpoint retorna HTTP `207` e mantém o processamento dos demais mapas.
-
-### Consultar Evento (GET /event)
-
-Retorna todos os parâmetros e metadados de um evento pelo `event_id`:
-
-```bash
-curl "http://localhost:8080/event?event_id=00001_20260105_page_view_Martech_Cachorro"
-```
-
-### Consultar Eventos de um Mapa (GET /map)
-
-Retorna todos os eventos carregados de um `map_id`. `map_version` é opcional:
-
-```bash
-curl "http://localhost:8080/map?map_id=00002"
-curl "http://localhost:8080/map?map_id=00001&map_version=20260105"
-```
-
-### Consultar Eventos por Parâmetro (GET /events)
-
-Retorna eventos cujo parâmetro possui exatamente o valor informado. Por exemplo:
-
-```bash
-curl "http://localhost:8080/events?event_action=click"
-```
-
-O mapa é lido da tabela externa `tagging_maps.collection_maps_sheets`, que usa uma planilha do Google Sheets. A planilha precisa estar compartilhada com a conta de serviço usada pela API:
+## Arquitetura
 
 ```text
-developer@tagging-api-481123.iam.gserviceaccount.com
+Frontend (Render Static Site)
+          |
+          v
+API Flask + Gunicorn (Render Web Service)
+          |
+          v
+PostgreSQL (Render): map_collection particionada por hash(map_id) + map_taxonomy
 ```
 
-Para o acesso funcionar, habilite as APIs e conceda permissão para executar consultas:
-
-```bash
-gcloud services enable bigquery.googleapis.com drive.googleapis.com \
-  --project=tagging-api-481123
-
-gcloud projects add-iam-policy-binding tagging-api-481123 \
-  --member="serviceAccount:developer@tagging-api-481123.iam.gserviceaccount.com" \
-  --role="roles/bigquery.jobUser"
-```
-
-Na planilha de regras, use **Compartilhar** e adicione a mesma conta de serviço como **Leitor**. Depois recrie o `key.json` com `make setup-creds`, reinicie os containers e teste novamente com `map_id` `00002`.
-
-### Limpar Cache (POST /clear-cache)
-
-Remove documentos do Firestore (⚠️ requer `ADMIN_KEY`):
-
-```bash
-curl -X POST http://localhost:8080/clear-cache \
-  -H "Content-Type: application/json" \
-  -H "X-ADMIN-KEY: seu-secret" \
-  -d '{"confirm": true}'
-```
-
----
-
-## 🚀 Deploy em Produção
-
-### Pré-requisitos
-
-1. **Projeto GCP**: `tagging-api-481123`
-2. **gcloud CLI configurado**: `gcloud config set project tagging-api-481123`
-3. **Cloud Run habilitado**: `gcloud services enable run`
-
-### Opção 1: Deploy Automático (GitHub Actions)
-
-**Primeira vez - Configurar WIF:**
-
-```bash
-./deployment/setup-github-actions.sh
-```
-
-Copie os valores para GitHub Secrets em:
-`https://github.com/brunosilvino/tagging-api/settings/secrets/actions`
-
-- `WIF_PROVIDER`
-- `WIF_SERVICE_ACCOUNT`
-- `ADMIN_KEY` (gere com: `openssl rand -hex 32`)
-- `MEASUREMENT_PROTOCOL_API_SECRET` (secret do Google Analytics Measurement Protocol)
-- `CORS_ORIGINS` (ex: `https://seu-dominio.com,https://app.seu-dominio.com`)
-
-**Deploy automático:**
-```bash
-git push origin main  # Triggers CI/CD
-```
-
-**Configurar CORS em Produção:**
-1. Vá para: `https://github.com/brunosilvino/tagging-api/settings/secrets/actions`
-2. Adicione um novo secret `CORS_ORIGINS`:
-   ```
-   https://seu-dominio.com,https://app.seu-dominio.com,https://api.seu-dominio.com
-   ```
-3. O workflow do GitHub Actions usará essa variável automaticamente
-
-### Opção 2: Deploy Manual
-
-```bash
-./deployment/deploy.sh [TAG]
-
-# Com CORS configurado via variável de ambiente
-CORS_ORIGINS="https://seu-dominio.com" ./deployment/deploy.sh
-```
-
-### Monitoramento
-
-```bash
-# Logs em tempo real
-gcloud run logs read tagging-api --region southamerica-east1 --follow
-
-# Status do serviço
-gcloud run services describe tagging-api --region southamerica-east1
-
-# Testar endpoint em produção
-URL=$(gcloud run services describe tagging-api \
-  --region southamerica-east1 \
-  --format='value(status.url)')
-curl "$URL/"
-```
-
----
-
-## 🔐 Segurança
-
-### Proteção de Credenciais
-
-✅ **Arquivos Ignorados:**
-- `key.json` → `.gitignore` (nunca vai pro repo)
-- `key.json` → `.dockerignore` (nunca vai pra produção)
-
-✅ **Variáveis de Ambiente:**
-- Segredos passados via `docker compose` ou Cloud Run
-- Nunca hardcoded no código
-
-✅ **Measurement Protocol:**
-- Desenvolvimento: `measurement_protocol_api_secret` dentro do `key.json` local
-- Produção: secret `MEASUREMENT_PROTOCOL_API_SECRET` do GitHub Actions, injetado no Cloud Run
-- O segredo nunca é aceito no payload nem enviado pelo navegador
-
-✅ **Authentication:**
-- Desenvolvimento: Conta de serviço local (`developer@tagging-api-481123`)
-- Produção: Workload Identity Federation (sem chaves)
-
-✅ **Endpoints Protegidos:**
-- Todos os endpoints da API exigem `Authorization: Bearer <API_KEY>`.
-- O endpoint de limpeza de cache também exige `X-ADMIN-KEY` quando `ADMIN_KEY` estiver configurada.
-
-### Geração de Credenciais Segura
-
-```bash
-# Gerar automaticamente (recomendado)
-make setup-creds
-
-# Validar
-make validate-creds
-```
-
-O script:
-- ✓ Verifica autenticação com `gcloud`
-- ✓ Usa conta de serviço existente
-- ✓ Cria apenas as permissões necessárias
-- ✓ Substitui chaves antigas automaticamente
-
----
-
-## 🆘 Troubleshooting
-
-### Container não inicia
-
-```bash
-# Ver logs
-docker compose logs tagging-api
-
-# Reconstruir
-docker compose build --no-cache
-docker compose up -d
-```
-
-### `gcloud` não encontrado
-
-```bash
-brew install --cask google-cloud-sdk
-gcloud --version
-```
-
-### Erro ao gerar credenciais
-
-```bash
-# Verificar autenticação
-gcloud auth list
-
-# Reautenticar se necessário
-gcloud auth login
-gcloud config set project tagging-api-481123
-```
-
-### Erro ao conectar Firestore/BigQuery
-
-- Verifique `key.json` na raiz do projeto
-- Confirme `GOOGLE_CLOUD_PROJECT=tagging-api-481123` no docker-compose
-- Valide IAM roles: `make validate-creds`
-
-### Deploy falha no GitHub Actions
-
-- Confirme WIF configurado: `./deployment/setup-github-actions.sh`
-- Verifique secrets em: `Settings → Secrets → Actions`
-- Consulte logs do workflow em: `Actions → Deploy`
-
----
-
-## 📚 Referências
-
-| Recurso | Link |
-|---------|------|
-| Flask | [palletsprojects.com](https://flask.palletsprojects.com/) |
-| Cloud Run | [cloud.google.com/run](https://cloud.google.com/run/docs) |
-| Firestore | [cloud.google.com/firestore](https://cloud.google.com/firestore/docs) |
-| BigQuery | [cloud.google.com/bigquery](https://cloud.google.com/bigquery/docs) |
-| WIF | [cloud.google.com/workload-identity](https://cloud.google.com/docs/authentication/workload-identity-federation) |
-
----
-
-## 📊 Status do Projeto
-
-| Item | Status |
-|------|--------|
-| API Core | ✅ Estável |
-| 4-Layer Validation | ✅ Funcional |
-| Docker/Compose | ✅ Pronto |
-| Cloud Run Deploy | ✅ Automático |
-| Documentação | ✅ Completa |
-| Segurança | ✅ Implementada |
-
----
-
-## 🤝 Contribuindo
-
-1. Fork o repositório
-2. Crie uma branch (`git checkout -b feature/xyz`)
-3. Faça commits (`git commit -m "feat: xyz"`)
-4. Push (`git push origin feature/xyz`)
-5. Abra um Pull Request
-
----
-
-## 📝 Licença
-
-MIT License - veja LICENSE.md para detalhes.
-
----
-
-## 📞 Suporte
-
-Para dúvidas ou problemas:
-1. Consulte os **logs**: `docker compose logs tagging-api`
-2. Verifique **Troubleshooting** acima
-3. Abra uma **Issue** no GitHub
+A validação é composta por deduplicação, taxonomia, schema e, opcionalmente, Google Measurement Protocol. A camada Google continua sendo uma integração externa opcional; ela não é usada como banco ou infraestrutura de deploy.

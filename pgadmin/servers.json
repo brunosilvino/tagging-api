@@ -1,0 +1,16 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Tagging PostgreSQL",
+      "Group": "Tagging API",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "tagging",
+      "Username": "tagging",
+      "Password": "tagging",
+      "SSLMode": "prefer",
+      "ConnectNow": true,
+      "Shared": false
+    }
+  }
+}

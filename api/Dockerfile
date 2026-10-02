@@ -13,13 +13,12 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Instala dependências
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir flask gunicorn
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia o restante do código
 COPY . .
 
-# Expõe a porta (Cloud Run padrão)
+# Expõe a porta usada pelo Render
 EXPOSE 8080
 
 # Health check
