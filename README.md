@@ -54,14 +54,34 @@ O servidor `Tagging PostgreSQL` já é importado automaticamente a partir de
 
 A pasta `database/` é a fonte da base local:
 
-- `001_schema.sql`: as tabelas, partições e índices.
-- `002_seed.sql`: registros demonstrativos.
-- `003_import_map_collection.sql`: importa `map_collection.csv` para `map_collection`.
-- `004_import_map_taxonomy.sql`: importa `map_taxonomy.csv`.
+- `init.sql`: cria as tabelas, partições e índices e importa os dois CSVs.
+- `map_collection.csv`: dados de eventos e mapas.
+- `map_taxonomy.csv`: regras de taxonomia.
 
 Os scripts de inicialização do PostgreSQL só rodam quando o volume é criado.
 Para recriar a base local a partir desses arquivos, use `docker compose down -v`
 e depois `make up`.
+
+### Criar ou atualizar o banco com os CSVs
+
+O script `database/init.sql` cria o schema e importa os arquivos
+`map_collection.csv` e `map_taxonomy.csv` de forma idempotente. Ele pode ser
+executado contra o PostgreSQL local ou contra o banco gerenciado do Render.
+
+Defina `DATABASE_URL` com a URL do banco e execute a partir da raiz do projeto:
+
+```bash
+export DATABASE_URL='postgresql://...'
+docker run --rm -i \
+  -v "$PWD/database:/seed:ro" \
+  -w /seed \
+  postgres:16-alpine \
+  psql "$DATABASE_URL" -f init.sql
+```
+
+O comando usa `\copy`, portanto os CSVs são lidos do diretório montado no
+container. O script faz upsert e pode ser executado novamente sem duplicar
+registros.
 
 Variáveis principais: `DATABASE_URL`, `API_KEY`, `ADMIN_KEY`, `CORS_ORIGINS` e `DEDUP_TTL`.
 
@@ -97,7 +117,15 @@ O arquivo `render.yaml` define três recursos:
 
 Configure `API_KEY`, `ADMIN_KEY` e `CORS_ORIGINS` como variáveis secretas ou de ambiente no Render. O banco é injetado na API por `DATABASE_URL`. Não são necessários GCP, Redis, VPC, `key.json` ou service accounts.
 
-Para deploy automático via GitHub Actions, crie o secret `RENDER_DEPLOY_HOOK` com o Deploy Hook do Web Service. O workflow dispara esse hook em pushes para `main`.
+Para deploy automático via GitHub Actions, crie estes secrets no repositório:
+
+- `RENDER_DEPLOY_HOOK`: Deploy Hook do Web Service.
+- `RENDER_DATABASE_URL`: External Database URL do PostgreSQL do Render.
+
+O workflow executa `database/init.sql` antes de disparar o Deploy Hook da API.
+Ele usa a imagem `postgres:16-alpine` apenas como cliente PostgreSQL; não cria
+outro banco. O `RENDER_DATABASE_URL` deve ser configurado somente depois que o
+PostgreSQL do Render existir.
 
 ## Arquitetura
 

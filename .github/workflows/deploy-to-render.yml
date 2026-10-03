@@ -10,14 +10,32 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Validate Render deploy hook
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          RENDER_DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
         run: |
           if [ -z "$RENDER_DEPLOY_HOOK" ]; then
             echo "::error::GitHub secret RENDER_DEPLOY_HOOK is not configured."
             exit 1
           fi
+          if [ -z "$RENDER_DATABASE_URL" ]; then
+            echo "::error::GitHub secret RENDER_DATABASE_URL is not configured."
+            exit 1
+          fi
+
+      - name: Seed Render database
+        env:
+          RENDER_DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+        run: |
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE/database:/seed:ro" \
+            -w /seed \
+            postgres:16-alpine \
+            psql "$RENDER_DATABASE_URL" -v ON_ERROR_STOP=1 -f init.sql
 
       - name: Trigger Render deploy
         env:
