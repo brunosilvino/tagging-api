@@ -16,7 +16,7 @@ let counter = 0
 /**
  * Objeto global com parâmetros compartilhados em todos os eventos da página
  */
-window.trackerObj = {
+window.trackingObj = {
     map_id: '00003',
     page_path: (location.pathname.includes('/index.html')) ? '/' : location.pathname.replace('.html', ''),
     debug_mode: debugMode,
@@ -25,7 +25,6 @@ window.trackerObj = {
     //client_id: ga4.clientid,
     event_id: '65f9c171fcee743f1dec1fecb8d98b97'
 }
-window.trackingObj = window.trackerObj
 
 /**
  * Classe para interagir com a Tagging API.
@@ -166,6 +165,10 @@ class Tracker {
         this.clientid = this.get_ga_clientid()
 
     }
+    getMeasurementId(){
+        return this.measurement_id
+    }
+
     get_ga_clientid() {
         const cookie = {};
         document.cookie.split(';').forEach(function (el) {
@@ -228,10 +231,10 @@ class Tracker {
 
 const ga4 = new Tracker('G-GX41BSHS2R')  // Substitua pelo seu Measurement ID do GA4
 const taggingAPI = new TaggingAPI(
-    window.TAGGING_API_URL || 'http://localhost:8080',
-    window.TAGGING_API_KEY || '',
-    window.TAGGING_MEASUREMENT_ID || '',
-    window.TAGGING_MEASUREMENT_PROTOCOL_SECRET || ''
+    'https://taggingapi.onrender.com/' || 'http://localhost:8080',
+    'BDKNDlCSYso7209zkgUvl0hyiPUrGjAo' || '',
+    ga4.getMeasurementId() || '',
+    ''
 )
 
 //PAGEVIEW
@@ -357,7 +360,7 @@ function renderTrackerPayload() {
     const payloadBody = document.querySelector('#tracker-payload-body')
     if (!payloadBody) return
 
-    Object.entries(window.trackerObj).forEach(([key, value]) => {
+    Object.entries(window.trackingObj).forEach(([key, value]) => {
         const row = document.createElement('tr')
         const field = document.createElement('th')
         const content = document.createElement('td')
