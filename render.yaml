@@ -5,7 +5,7 @@ services:
     rootDir: api
     dockerfilePath: ./Dockerfile
     healthCheckPath: /
-    plan: starter
+    plan: free
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -34,4 +34,4 @@ services:
 
 databases:
   - name: tagging-db
-    plan: starter
+    plan: free
