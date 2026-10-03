@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tagging-api
+    name: tagging-api 
     runtime: docker
     rootDir: api
     dockerfilePath: ./Dockerfile
@@ -14,7 +14,7 @@ services:
       - key: FLASK_ENV
         value: production
       - key: CORS_ORIGINS
-        value: https://tagging-frontend.onrender.com
+        value: https://taggingapi.onrender.com
       - key: API_KEY
         sync: false
       - key: ADMIN_KEY
@@ -22,14 +22,14 @@ services:
       - key: DEDUP_TTL
         value: "2.0"
 
-  - type: static_site
+  - type: static
     name: tagging-frontend
     rootDir: frontend
     buildCommand: ""
     staticPublishPath: .
     envVars:
       - key: API_URL
-        value: https://tagging-api.onrender.com
+        value: https://taggingapi.onrender.com
 
 databases:
   - name: tagging-db
