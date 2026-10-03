@@ -22,8 +22,9 @@ services:
       - key: DEDUP_TTL
         value: "2.0"
 
-  - type: static
+  - type: web
     name: tagging-frontend
+    runtime: static
     rootDir: frontend
     buildCommand: ""
     staticPublishPath: .
