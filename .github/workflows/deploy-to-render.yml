@@ -1,14 +1,19 @@
 name: Deploy to Render
 
-on:
-  push:
-    branches:
-      - architecture
-  workflow_dispatch:
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "::error::GitHub secret RENDER_DEPLOY_HOOK is not configured."
+            exit 1
+          fi
+
       - name: Trigger Render deploy
-        run: curl --fail --silent --show-error -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: curl --fail --silent --show-error -X POST "$RENDER_DEPLOY_HOOK"
