@@ -136,7 +136,7 @@ class TaggingAPI {
 }
 
 class Tracker {
-    measurement_id = null
+    measurement_id = ''
 
     constructor(measurement_id) {
         if (!measurement_id || typeof measurement_id !== 'string' || !measurement_id.startsWith('G-')) {
@@ -230,12 +230,11 @@ class Tracker {
 }
 
 const ga4 = new Tracker('G-GX41BSHS2R')  // Substitua pelo seu Measurement ID do GA4
-const taggingAPI = new TaggingAPI(
-    'https://taggingapi.onrender.com/' || 'http://localhost:8080',
-    'BDKNDlCSYso7209zkgUvl0hyiPUrGjAo' || '',
-    ga4.getMeasurementId() || '',
-    ''
-)
+const taggingAPIconfig = /(localhost|file)/.test(location.href)
+    ? ['http://localhost:8080', '', ga4.getMeasurementId(), '']
+    : ['https://taggingapi-api.onrender.com/', 'BDKNDlCSYso7209zkgUvl0hyiPUrGjAo', ga4.getMeasurementId(), '']
+
+const taggingAPI = new TaggingAPI(...taggingAPIconfig)
 
 //PAGEVIEW
 document.addEventListener('DOMContentLoaded', (event) => {
