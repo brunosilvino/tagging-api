@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tagging-api 
+    name: taggingapi-api 
     runtime: docker
     rootDir: api
     dockerfilePath: ./Dockerfile
@@ -14,16 +14,16 @@ services:
       - key: FLASK_ENV
         value: production
       - key: CORS_ORIGINS
-        value: https://taggingapi.onrender.com
+        value: https://taggingapi.onrender.com #Define as origens permitidas para consumo da API
       - key: API_KEY
         sync: false
-      - key: ADMIN_KEY
+      - key: ADMIN_KEY # Chave utilizada para operar métodos persistentes no banco de dados 
         sync: false
       - key: DEDUP_TTL
-        value: "2.0"
+        value: "2.0" # Intervalo em segundos para avaliar duplicação
 
   - type: web
-    name: tagging-frontend
+    name: taggingapi
     runtime: static
     rootDir: frontend
     buildCommand: ""
